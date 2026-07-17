@@ -158,197 +158,359 @@ router.post("/mac-agent/test-send", async (req, res) => {
 router.get("/mac-agent/download", (_req, res) => {
   const script = `#!/bin/bash
 # ============================================================
-#  Dispatch — Mac Agent Setup Script v3.0
+#  Dispatch — Mac Agent Setup Script v4.0
 #
-#  Runs on your Mac to enable iMessage/SMS sending from the
-#  Dispatch dashboard. Requires macOS + Node.js 18+.
+#  Fully automatic: installs the agent, starts a Cloudflare
+#  tunnel, and registers the URL with your dashboard.
+#  No manual tunnel step required.
 #
 #  Usage:
-#    chmod +x dispatch-agent-setup.sh && ./dispatch-agent-setup.sh
+#    DISPATCH_URL=https://your-replit-url.replit.dev bash dispatch-agent-setup.sh
 #
-#  To connect heartbeats (recommended):
-#    DISPATCH_URL=https://your-replit-url.replit.dev ./dispatch-agent-setup.sh
-#
-#  After starting, expose the agent with a tunnel:
-#    Cloudflare: npx cloudflared tunnel --url http://localhost:3001
-#    ngrok:      ngrok http 3001
-#
-#  Then paste the HTTPS tunnel URL in Dispatch → Settings.
+#  Requires: macOS, Node.js 18+
 # ============================================================
-
-set -e
 
 AGENT_DIR="\$HOME/.dispatch-agent"
 LOG_DIR="\$AGENT_DIR/logs"
 PORT=\${MAC_AGENT_PORT:-3001}
+PLIST_DIR="\$HOME/Library/LaunchAgents"
+AGENT_PLIST="\$PLIST_DIR/com.dispatch.agent.plist"
+TUNNEL_PLIST="\$PLIST_DIR/com.dispatch.tunnel.plist"
 
-# Colour helpers
-RED="\\033[0;31m"; GREEN="\\033[0;32m"; YELLOW="\\033[1;33m"; CYAN="\\033[0;36m"; RESET="\\033[0m"
-info()    { echo -e "  \${CYAN}→\${RESET} \$1"; }
-success() { echo -e "  \${GREEN}✓\${RESET} \$1"; }
-warn()    { echo -e "  \${YELLOW}⚠\${RESET} \$1"; }
-error()   { echo -e "  \${RED}✗\${RESET} \$1"; }
-header()  { echo ""; echo -e "  \${CYAN}── \$1 ──\${RESET}"; }
+# ── Colour helpers ─────────────────────────────────────────
+RED="\\033[0;31m"; GREEN="\\033[0;32m"; YELLOW="\\033[1;33m"
+CYAN="\\033[0;36m"; BOLD="\\033[1m"; RESET="\\033[0m"
+info()    { echo -e "  \${CYAN}→\${RESET} \$*"; }
+success() { echo -e "  \${GREEN}✓\${RESET} \$*"; }
+warn()    { echo -e "  \${YELLOW}⚠\${RESET} \$*"; }
+error()   { echo -e "  \${RED}✗\${RESET} \$*"; }
+header()  { echo ""; echo -e "  \${CYAN}\${BOLD}── \$* ──\${RESET}"; echo ""; }
+die()     { error "\$*"; exit 1; }
 
 echo ""
 echo "  ┌─────────────────────────────────────────────┐"
-echo "  │   Dispatch Mac Agent  ·  Installer v3.0     │"
+echo "  │   Dispatch Mac Agent  ·  Installer v4.0     │"
 echo "  └─────────────────────────────────────────────┘"
 echo ""
 
-# ── 1. Platform check ──────────────────────────────────────
+# ── 1. Platform & Node.js ──────────────────────────────────
 header "Step 1: Checking Requirements"
-if [[ "\$(uname)" != "Darwin" ]]; then
-  error "This script must be run on macOS. Exiting."
-  exit 1
-fi
+[[ "\$(uname)" == "Darwin" ]] || die "This script must be run on macOS."
 success "macOS detected"
 
-# ── 2. Node.js check ──────────────────────────────────────
-if ! command -v node &>/dev/null; then
+command -v node &>/dev/null || {
   error "Node.js not found."
-  info  "Install it from https://nodejs.org (choose LTS)"
+  info  "Install the LTS version from https://nodejs.org — takes about 2 minutes."
   exit 1
-fi
+}
 NODE_VER=\$(node -e "process.stdout.write(process.version)")
 NODE_MAJOR=\$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))")
-if [[ \$NODE_MAJOR -lt 18 ]]; then
-  error "Node.js 18+ required. You have \$NODE_VER."
-  info  "Update at https://nodejs.org"
-  exit 1
-fi
-success "Node.js \$NODE_VER"
+[[ \$NODE_MAJOR -ge 18 ]] || die "Node.js 18+ required (you have \$NODE_VER). Update at https://nodejs.org"
+NODE_BIN=\$(command -v node)
+success "Node.js \$NODE_VER (\$NODE_BIN)"
 
-# ── 3. Create directories ──────────────────────────────────
-header "Step 2: Installing Agent"
+command -v npx &>/dev/null || die "npx not found. Reinstall Node.js from https://nodejs.org"
+success "npx available"
+
+# ── 2. Stop any existing agent & tunnel ────────────────────
+header "Step 2: Preparing Clean Start"
+
+stop_port() {
+  local pids
+  pids=\$(lsof -ti:"\$PORT" 2>/dev/null || true)
+  if [[ -n "\$pids" ]]; then
+    info "Stopping existing process on port \$PORT..."
+    echo "\$pids" | xargs kill -TERM 2>/dev/null || true
+    sleep 1
+    pids=\$(lsof -ti:"\$PORT" 2>/dev/null || true)
+    [[ -n "\$pids" ]] && echo "\$pids" | xargs kill -9 2>/dev/null || true
+    sleep 0.5
+  fi
+}
+
+launchctl unload "\$AGENT_PLIST" 2>/dev/null || true
+launchctl unload "\$TUNNEL_PLIST" 2>/dev/null || true
+sleep 1
+stop_port
+success "Port \$PORT is free"
+
+# ── 3. Install agent files ─────────────────────────────────
+header "Step 3: Installing Agent"
 mkdir -p "\$AGENT_DIR" "\$LOG_DIR"
 success "Agent directory: \$AGENT_DIR"
 
-# ── 4. Write package.json ──────────────────────────────────
-cat > "\$AGENT_DIR/package.json" <<'PKGJSON'
+cat > "\$AGENT_DIR/package.json" << 'PKGJSON'
 {
   "name": "dispatch-mac-agent",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "type": "module",
   "description": "Dispatch Mac Agent — bridges the dashboard to Messages.app"
 }
 PKGJSON
 success "package.json written"
 
-# ── 5. Write server.js ────────────────────────────────────
 cat > "\$AGENT_DIR/server.js" << 'AGENTEOF'
 ${agentServerJs}
 AGENTEOF
-
 success "server.js written"
 
-# ── 6. Write config.json with DISPATCH_URL ─────────────────
+# ── 4. Save config ─────────────────────────────────────────
+CONFIG_PATH="\$AGENT_DIR/config.json"
+EXISTING_ID=""
+if [[ -f "\$CONFIG_PATH" ]]; then
+  EXISTING_ID=\$(node --input-type=module -e "
+import { readFileSync } from 'fs';
+try {
+  const c = JSON.parse(readFileSync(process.env.CFG, 'utf8'));
+  process.stdout.write(c.agentId || '');
+} catch {}
+" CFG="\$CONFIG_PATH" 2>/dev/null || true)
+fi
+[[ -n "\$EXISTING_ID" ]] || EXISTING_ID=\$(node --input-type=module -e "
+import { randomUUID } from 'crypto';
+process.stdout.write(randomUUID());
+")
+
 if [[ -n "\$DISPATCH_URL" ]]; then
-  header "Step 3: Saving Dashboard URL"
-  EXISTING_ID=""
-  CONFIG_PATH="\$AGENT_DIR/config.json"
-  if [[ -f "\$CONFIG_PATH" ]]; then
-    EXISTING_ID=\$(node -e "
-      import { readFileSync } from 'fs';
-      try {
-        const c = JSON.parse(readFileSync('\$CONFIG_PATH', 'utf8'));
-        process.stdout.write(c.agentId || '');
-      } catch {}
-    " 2>/dev/null || true)
-  fi
-  if [[ -z "\$EXISTING_ID" ]]; then
-    EXISTING_ID=\$(node -e "import { randomUUID } from 'crypto'; process.stdout.write(randomUUID());")
-  fi
-  # Strip trailing slash
   CLEAN_URL="\${DISPATCH_URL%/}"
-  node -e "
-    import { writeFileSync } from 'fs';
-    const cfg = { agentId: '\$EXISTING_ID', dispatchUrl: '\$CLEAN_URL' };
-    writeFileSync('\$CONFIG_PATH', JSON.stringify(cfg, null, 2));
-    console.log('  Config saved.');
-  "
-  success "Dashboard URL saved: \$CLEAN_URL"
+  node --input-type=module -e "
+import { writeFileSync } from 'fs';
+writeFileSync(process.env.CFG, JSON.stringify({
+  agentId: process.env.AID,
+  dispatchUrl: process.env.URL
+}, null, 2));
+" CFG="\$CONFIG_PATH" AID="\$EXISTING_ID" URL="\$CLEAN_URL"
+  success "Dashboard URL: \$CLEAN_URL"
   success "Agent ID: \$EXISTING_ID"
 else
-  warn "DISPATCH_URL not set — heartbeats disabled."
-  warn "Run with: DISPATCH_URL=https://your-url ./dispatch-agent-setup.sh"
-  warn "Or restart later: DISPATCH_URL=https://your-url node \$AGENT_DIR/server.js"
+  node --input-type=module -e "
+import { writeFileSync } from 'fs';
+writeFileSync(process.env.CFG, JSON.stringify({ agentId: process.env.AID }, null, 2));
+" CFG="\$CONFIG_PATH" AID="\$EXISTING_ID"
+  warn "DISPATCH_URL not set — heartbeats to the dashboard are disabled."
+  warn "Re-run with: DISPATCH_URL=https://your-url bash dispatch-agent-setup.sh"
 fi
 
-# ── 7. LaunchAgent (optional auto-start) ───────────────────
-header "Step 4: Auto-Start (optional)"
-read -r -p "  Install LaunchAgent to start automatically at login? [y/N] " INSTALL_LAUNCH
-LAUNCH_AGENT_STARTED=false
-if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
-  NODE_BIN=\$(command -v node)
-  if [[ -z "\$NODE_BIN" ]]; then
-    error "Cannot find node binary path. Is Node.js in your PATH?"
-    exit 1
+# ── 5. Write tunnel helper script ──────────────────────────
+# This script is called by the tunnel LaunchAgent (and directly
+# in foreground mode). It starts cloudflared, waits for the URL,
+# then registers it with Dispatch automatically.
+cat > "\$AGENT_DIR/start-tunnel.sh" << 'TUNNELEOF'
+#!/bin/bash
+AGENT_DIR="\$HOME/.dispatch-agent"
+LOG_DIR="\$AGENT_DIR/logs"
+TUNNEL_LOG="\$LOG_DIR/tunnel.log"
+CONFIG="\$AGENT_DIR/config.json"
+PORT=\${MAC_AGENT_PORT:-3001}
+
+DISPATCH_URL=\$(node --input-type=module -e "
+import { readFileSync } from 'fs';
+try {
+  const c = JSON.parse(readFileSync(process.env.CFG, 'utf8'));
+  process.stdout.write(c.dispatchUrl || '');
+} catch {}
+" CFG="\$CONFIG" 2>/dev/null || true)
+
+echo "" > "\$TUNNEL_LOG"
+npx cloudflared tunnel --url "http://localhost:\$PORT" >> "\$TUNNEL_LOG" 2>&1 &
+CPID=\$!
+
+TUNNEL_URL=""
+for i in \$(seq 1 60); do
+  sleep 1
+  TUNNEL_URL=\$(grep -oE 'https://[a-z0-9-]+\\.trycloudflare\\.com' "\$TUNNEL_LOG" 2>/dev/null | head -1)
+  [[ -n "\$TUNNEL_URL" ]] && break
+done
+
+if [[ -n "\$TUNNEL_URL" ]]; then
+  echo "  ✓ Tunnel: \$TUNNEL_URL" | tee -a "\$TUNNEL_LOG"
+  if [[ -n "\$DISPATCH_URL" ]]; then
+    STATUS=\$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "\$DISPATCH_URL/api/settings" \\
+      -H "Content-Type: application/json" \\
+      -d "{\"macAgentUrl\":\"\$TUNNEL_URL\"}" 2>/dev/null || echo "000")
+    if [[ "\$STATUS" == "200" ]]; then
+      echo "  ✓ Registered with Dispatch automatically" | tee -a "\$TUNNEL_LOG"
+    else
+      echo "  ⚠ Could not auto-register (HTTP \$STATUS). Paste manually: \$TUNNEL_URL" | tee -a "\$TUNNEL_LOG"
+    fi
   fi
-  PLIST_DIR="\$HOME/Library/LaunchAgents"
-  PLIST_FILE="\$PLIST_DIR/com.dispatch.agent.plist"
+else
+  echo "  ⚠ Tunnel URL not detected after 60s. Check: \$TUNNEL_LOG" >&2
+fi
+
+wait "\$CPID"
+TUNNELEOF
+chmod +x "\$AGENT_DIR/start-tunnel.sh"
+success "Tunnel script written"
+
+# ── 6. Auto-start preference ───────────────────────────────
+header "Step 4: Auto-Start"
+echo "  Install as a background service that starts automatically"
+echo "  at login? This is recommended — both the agent and tunnel"
+echo "  will restart if your Mac reboots."
+echo ""
+read -r -p "  Install background service? [Y/n] " INSTALL_LAUNCH
+echo ""
+LAUNCH_AGENT_STARTED=false
+
+if [[ ! "\$INSTALL_LAUNCH" =~ ^[Nn]$ ]]; then
+  BASH_BIN=\$(command -v bash)
+  CURRENT_PATH="\$PATH"
   mkdir -p "\$PLIST_DIR"
-  # Unload any existing instance first to avoid port conflicts on re-runs
-  launchctl unload "\$PLIST_FILE" 2>/dev/null || true
-  cat > "\$PLIST_FILE" <<PLISTEOF
+
+  # Agent LaunchAgent
+  cat > "\$AGENT_PLIST" << AGENTPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.dispatch.agent</string>
+  <key>Label</key><string>com.dispatch.agent</string>
   <key>ProgramArguments</key>
   <array>
     <string>\$NODE_BIN</string>
     <string>\$AGENT_DIR/server.js</string>
   </array>
-  <key>WorkingDirectory</key>
-  <string>\$AGENT_DIR</string>
+  <key>WorkingDirectory</key><string>\$AGENT_DIR</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MAC_AGENT_PORT</key>
-    <string>\${MAC_AGENT_PORT:-3001}</string>
+    <key>PATH</key><string>\$CURRENT_PATH</string>
+    <key>HOME</key><string>\$HOME</string>
+    <key>MAC_AGENT_PORT</key><string>\$PORT</string>
   </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>\$LOG_DIR/stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>\$LOG_DIR/stderr.log</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>\$LOG_DIR/agent-stdout.log</string>
+  <key>StandardErrorPath</key><string>\$LOG_DIR/agent-stderr.log</string>
 </dict>
 </plist>
-PLISTEOF
-  if launchctl load "\$PLIST_FILE" 2>/dev/null; then
-    success "LaunchAgent installed and started (using \$NODE_BIN)"
+AGENTPLIST
+
+  # Tunnel LaunchAgent
+  cat > "\$TUNNEL_PLIST" << TUNNELPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.dispatch.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>\$BASH_BIN</string>
+    <string>\$AGENT_DIR/start-tunnel.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>\$AGENT_DIR</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>\$CURRENT_PATH</string>
+    <key>HOME</key><string>\$HOME</string>
+    <key>MAC_AGENT_PORT</key><string>\$PORT</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>\$LOG_DIR/tunnel-stdout.log</string>
+  <key>StandardErrorPath</key><string>\$LOG_DIR/tunnel-stderr.log</string>
+</dict>
+</plist>
+TUNNELPLIST
+
+  launchctl load "\$AGENT_PLIST" 2>/dev/null && {
+    success "Agent service installed and running"
     LAUNCH_AGENT_STARTED=true
-  else
-    warn "Could not load LaunchAgent automatically. Run: launchctl load \$PLIST_FILE"
-  fi
+  } || warn "Could not start agent service. Run: launchctl load \$AGENT_PLIST"
+
+  launchctl load "\$TUNNEL_PLIST" 2>/dev/null && {
+    success "Tunnel service installed and running"
+  } || warn "Could not start tunnel service. Run: launchctl load \$TUNNEL_PLIST"
+
 else
-  info "Skipping LaunchAgent"
+  info "Skipping background service — will run in foreground"
 fi
 
-# ── 8. Start (only if LaunchAgent didn't already start it) ─
+# ── 7. Wait for tunnel URL and register ────────────────────
+header "Step 5: Connecting Tunnel"
+
+TUNNEL_URL=""
 if [[ "\$LAUNCH_AGENT_STARTED" == "true" ]]; then
+  info "Waiting for Cloudflare tunnel URL (up to 60 seconds)..."
+  for i in \$(seq 1 60); do
+    sleep 1
+    TUNNEL_URL=\$(grep -oE 'https://[a-z0-9-]+\\.trycloudflare\\.com' "\$LOG_DIR/tunnel-stdout.log" 2>/dev/null | head -1)
+    [[ -n "\$TUNNEL_URL" ]] && break
+    # Show progress every 10 seconds
+    [[ \$((i % 10)) -eq 0 ]] && info "Still waiting... (\${i}s)"
+  done
+else
+  # Foreground mode: start tunnel in background first, capture URL, then run agent in foreground
+  info "Starting Cloudflare tunnel..."
+  TUNNEL_LOG="\$LOG_DIR/tunnel.log"
+  echo "" > "\$TUNNEL_LOG"
+  npx cloudflared tunnel --url "http://localhost:\$PORT" >> "\$TUNNEL_LOG" 2>&1 &
+  TUNNEL_BG_PID=\$!
+  info "Waiting for tunnel URL (up to 60 seconds)..."
+  for i in \$(seq 1 60); do
+    sleep 1
+    TUNNEL_URL=\$(grep -oE 'https://[a-z0-9-]+\\.trycloudflare\\.com' "\$TUNNEL_LOG" 2>/dev/null | head -1)
+    [[ -n "\$TUNNEL_URL" ]] && break
+    [[ \$((i % 10)) -eq 0 ]] && info "Still waiting... (\${i}s)"
+  done
+fi
+
+if [[ -n "\$TUNNEL_URL" ]]; then
+  success "Tunnel URL: \$TUNNEL_URL"
+  if [[ -n "\$DISPATCH_URL" ]]; then
+    CLEAN_DISPATCH="\${DISPATCH_URL%/}"
+    HTTP_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "\$CLEAN_DISPATCH/api/settings" \\
+      -H "Content-Type: application/json" \\
+      -d "{\"macAgentUrl\":\"\$TUNNEL_URL\"}" 2>/dev/null || echo "000")
+    if [[ "\$HTTP_STATUS" == "200" ]]; then
+      success "Tunnel URL registered with Dispatch — no manual step needed!"
+    else
+      warn "Auto-register failed (HTTP \$HTTP_STATUS). Paste this URL into"
+      warn "Dispatch → Settings → Mac Agent URL:"
+      echo ""
+      echo "      \$TUNNEL_URL"
+      echo ""
+    fi
+  else
+    info "Paste this URL into Dispatch → Settings → Mac Agent URL:"
+    echo ""
+    echo "      \$TUNNEL_URL"
+    echo ""
+  fi
+else
+  warn "Tunnel URL not detected after 60 seconds."
+  if [[ "\$LAUNCH_AGENT_STARTED" == "true" ]]; then
+    info "Check \$LOG_DIR/tunnel-stdout.log for details."
+  else
+    info "Check \$LOG_DIR/tunnel.log for details."
+  fi
+  info "Once you have the URL, paste it in Dispatch → Settings → Mac Agent URL."
+fi
+
+# ── 8. Done ────────────────────────────────────────────────
+echo ""
+echo "  ┌─────────────────────────────────────────────────────┐"
+echo "  │  \${GREEN}\${BOLD}Setup complete!\${RESET}                                    │"
+echo "  └─────────────────────────────────────────────────────┘"
+echo ""
+
+if [[ "\$LAUNCH_AGENT_STARTED" == "true" ]]; then
+  success "Agent is running in the background (auto-restarts at login)"
+  success "Tunnel is running in the background (auto-restarts)"
   echo ""
-  success "Agent is running in the background via LaunchAgent."
-  info "Logs: \$LOG_DIR/stdout.log"
-  info "To stop:   launchctl unload \$HOME/Library/LaunchAgents/com.dispatch.agent.plist"
-  info "To restart: launchctl unload \$HOME/Library/LaunchAgents/com.dispatch.agent.plist && launchctl load \$HOME/Library/LaunchAgents/com.dispatch.agent.plist"
+  info "Useful commands:"
+  info "  View agent logs : tail -f \$LOG_DIR/agent-stdout.log"
+  info "  View tunnel logs: tail -f \$LOG_DIR/tunnel-stdout.log"
+  info "  Stop everything : launchctl unload \$AGENT_PLIST \$TUNNEL_PLIST"
+  info "  Restart         : launchctl unload \$AGENT_PLIST \$TUNNEL_PLIST && launchctl load \$AGENT_PLIST \$TUNNEL_PLIST"
+  echo ""
+  info "You can close this Terminal window — the agent runs in the background."
   echo ""
 else
-  header "Step 5: Starting Mac Agent"
+  echo "  Starting agent now. Keep this window open."
+  echo "  Press Ctrl+C to stop."
   echo ""
-  echo "  Starting agent. Keep this Terminal window open."
-  echo "  Open a NEW Terminal for the tunnel command."
-  echo ""
-  if [[ -n "\$DISPATCH_URL" ]]; then
-    DISPATCH_URL="\$DISPATCH_URL" node "\$AGENT_DIR/server.js"
-  else
-    node "\$AGENT_DIR/server.js"
-  fi
+  node "\$AGENT_DIR/server.js"
 fi
 `;
 
