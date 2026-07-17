@@ -24,6 +24,8 @@ function serialiseAgent(row: typeof macAgentsTable.$inferSelect) {
     connectedAccounts: row.connectedAccounts ?? [],
     connectedDevices: row.connectedDevices ?? [],
     usbDevices: row.usbDevices ?? [],
+    usbHardwareCount: row.usbHardwareCount ?? null,
+    deviceInfo: (row.deviceInfo as any[] | null) ?? null,
     queueSize: row.queueSize ?? 0,
     lastHeartbeatAt: row.lastHeartbeatAt?.toISOString() ?? null,
     lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
@@ -71,6 +73,12 @@ const heartbeatSchema = z.object({
   connectedAccounts: z.array(z.string()),
   connectedDevices: z.array(z.string()),
   usbDevices: z.array(z.string()).optional().default([]),
+  usbHardwareCount: z.number().int().min(0).optional(),
+  deviceInfo: z.array(z.object({
+    name: z.string(),
+    phone: z.string().nullable().optional(),
+    connectionType: z.enum(["usb", "wifi"]),
+  })).optional(),
   latencyMs: z.number().int().nullable().optional(),
   cpuUsage: z.number().min(0).max(100),
   memoryUsage: z.number().min(0).max(100),
@@ -107,6 +115,8 @@ router.post("/agents/heartbeat", async (req, res) => {
         connectedAccounts: hb.connectedAccounts,
         connectedDevices: hb.connectedDevices,
         usbDevices: hb.usbDevices,
+        usbHardwareCount: hb.usbHardwareCount ?? null,
+        deviceInfo: hb.deviceInfo ?? null,
         latencyMs: hb.latencyMs ?? null,
         cpuUsage: hb.cpuUsage,
         memoryUsage: hb.memoryUsage,
@@ -131,6 +141,8 @@ router.post("/agents/heartbeat", async (req, res) => {
           connectedAccounts: hb.connectedAccounts,
           connectedDevices: hb.connectedDevices,
           usbDevices: hb.usbDevices,
+          usbHardwareCount: hb.usbHardwareCount ?? null,
+          deviceInfo: hb.deviceInfo ?? null,
           latencyMs: hb.latencyMs ?? null,
           cpuUsage: hb.cpuUsage,
           memoryUsage: hb.memoryUsage,
@@ -587,15 +599,29 @@ async function getUsbConnectedIphones() {
   } catch { return []; }
 }
 
-async function getWifiConnectedIphones() {
+// Returns all SMS-forwarding services from Messages.app, each with its name and phone number.
+// Phone numbers are extracted from the service ID, e.g. "SMS;-;E:+15551234567;+15551234567".
+async function getSmsServices() {
   try {
-    const { stdout } = await execAsync(
+    const { stdout: nameOut } = await execAsync(
       \`osascript -e 'tell application "Messages" to get name of (services whose service type = SMS)'\`,
       { timeout: 8000 }
     );
-    const raw = stdout.trim();
-    if (!raw) return [];
-    return raw.split(", ").map(s => s.trim()).filter(Boolean);
+    const names = nameOut.trim() ? nameOut.trim().split(", ").map(s => s.trim()).filter(Boolean) : [];
+    if (names.length === 0) return [];
+
+    // Service IDs embed the phone number, e.g. "SMS;-;E:+15551234567;+15551234567"
+    const { stdout: idOut } = await execAsync(
+      \`osascript -e 'tell application "Messages" to get id of (services whose service type = SMS)'\`,
+      { timeout: 8000 }
+    ).catch(() => ({ stdout: "" }));
+    const ids = idOut.trim() ? idOut.trim().split(", ").map(s => s.trim()).filter(Boolean) : [];
+
+    return names.map((name, i) => {
+      const id = ids[i] || "";
+      const phoneMatch = id.match(/\+\d{7,15}/);
+      return { name, phone: phoneMatch ? phoneMatch[0] : null };
+    });
   } catch { return []; }
 }
 
@@ -624,31 +650,35 @@ function deviceNamesMatch(usbName, smsName) {
 }
 
 async function getStatus() {
-  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbHardwareNames, smsServiceNames] = await Promise.all([
+  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbHardwareNames, smsServices] = await Promise.all([
     getMacosVersion(),
     checkAppleScriptAvailable(),
     checkMessagesRunning(),
     getMessagesAccounts().catch(() => []),
     getUsbConnectedIphones(),
-    getWifiConnectedIphones().catch(() => []),
+    getSmsServices().catch(() => []),
   ]);
 
-  // Cross-reference USB hardware names with Messages.app SMS service names.
+  // Cross-reference USB hardware names against Messages.app SMS services.
   //
-  // usbDevices   → SMS service names for iPhones that are BOTH physically USB-connected
-  //                AND have Text Message Forwarding enabled. These are the correct names
-  //                to pass as fromPhone when sending via a USB-connected iPhone.
-  // connectedDevices → SMS service names for Wi-Fi-only forwarding iPhones (not USB).
+  // usbSmsServices   → services whose device name fuzzy-matches a USB hardware name
+  //                    AND have Text Message Forwarding enabled (real confirmed check).
+  // wifiOnlyServices → SMS services with no matching USB device (Wi-Fi forwarding only).
   //
-  // Why: system_profiler returns hardware names like "iPhone" or "John's iPhone (2)"
-  // which are NOT the same as Messages.app service names. Using the wrong name causes
-  // 'service named "iPhone"' to fail in AppleScript, leading to incorrect fallback.
-  const usbSmsServices = smsServiceNames.filter(sms =>
-    usbHardwareNames.some(usb => deviceNamesMatch(usb, sms))
+  // usbHardwareCount is the raw count of physically connected iPhones from system_profiler.
+  // If usbHardwareCount > 0 but usbSmsServices is empty → forwarding is NOT enabled.
+  const usbSmsServices = smsServices.filter(sms =>
+    usbHardwareNames.some(usb => deviceNamesMatch(usb, sms.name))
   );
-  const wifiOnlySmsServices = smsServiceNames.filter(sms =>
+  const wifiOnlyServices = smsServices.filter(sms =>
     !usbSmsServices.includes(sms)
   );
+
+  // deviceInfo: full list with phone numbers — used by the dashboard for real display names.
+  const deviceInfo = [
+    ...usbSmsServices.map(s => ({ name: s.name, phone: s.phone, connectionType: "usb" })),
+    ...wifiOnlyServices.map(s => ({ name: s.name, phone: s.phone, connectionType: "wifi" })),
+  ];
 
   return {
     agentId: config.agentId,
@@ -662,8 +692,12 @@ async function getStatus() {
     messagesAppRunning: messagesRunning,
     appleScriptAvailable,
     connectedAccounts: accounts,
-    connectedDevices: wifiOnlySmsServices,
-    usbDevices: usbSmsServices,
+    // Legacy string arrays kept for backward compat with older dashboard versions
+    connectedDevices: wifiOnlyServices.map(s => s.name),
+    usbDevices: usbSmsServices.map(s => s.name),
+    // New: real hardware count + full device info with phone numbers
+    usbHardwareCount: usbHardwareNames.length,
+    deviceInfo,
     cpuUsage: getCpuUsage(),
     memoryUsage: getMemoryUsage(),
     uptime: Math.round(process.uptime()),
@@ -693,6 +727,8 @@ async function sendHeartbeat() {
       connectedAccounts: status.connectedAccounts,
       connectedDevices: status.connectedDevices,
       usbDevices: status.usbDevices,
+      usbHardwareCount: status.usbHardwareCount,
+      deviceInfo: status.deviceInfo,
       latencyMs: null,
       cpuUsage: status.cpuUsage,
       memoryUsage: status.memoryUsage,

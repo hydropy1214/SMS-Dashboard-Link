@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, real, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, real, boolean, jsonb } from "drizzle-orm/pg-core";
 
 export const macAgentsTable = pgTable("mac_agents", {
   id: serial("id").primaryKey(),
@@ -14,6 +14,8 @@ export const macAgentsTable = pgTable("mac_agents", {
   connectedAccounts: text("connected_accounts").array(),
   connectedDevices: text("connected_devices").array(),
   usbDevices: text("usb_devices").array(),
+  usbHardwareCount: integer("usb_hardware_count"),
+  deviceInfo: jsonb("device_info"),
   latencyMs: integer("latency_ms"),
   cpuUsage: real("cpu_usage"),
   memoryUsage: real("memory_usage"),

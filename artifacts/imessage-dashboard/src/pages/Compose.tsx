@@ -64,8 +64,9 @@ interface DeviceEntry {
   key: DeviceKey;
   agentId: string;
   agentHostname: string;
-  fromPhone: string;
-  displayName: string;
+  fromPhone: string;       // Messages.app service name — used as the send target
+  displayName: string;     // phone number if known, else service name
+  phoneNumber?: string;    // e.g. "+15551234567" when the new agent reports it
   connectionType: "usb" | "wifi" | "imessage";
 }
 
@@ -137,27 +138,49 @@ export default function Compose() {
   );
 
   // Flat list of all sendable devices across all online agents — deduplicated by key.
-  // Duplicate keys (e.g. two USB iPhones both named "iPhone") would cause the same
-  // phone number to be sent twice when both entries are selected.
+  // New agents include deviceInfo with real phone numbers.
+  // Old agents fall back to the usbDevices / connectedDevices string arrays.
   const allDevices = useMemo<DeviceEntry[]>(() => {
     const seen = new Set<DeviceKey>();
     const list: DeviceEntry[] = [];
     for (const agent of onlineAgents) {
-      const usb:  string[] = (agent as any).usbDevices ?? [];
-      const wifi: string[] = (agent as any).connectedDevices ?? [];
+      const deviceInfo: any[] | null = (agent as any).deviceInfo ?? null;
       const acct: string[] = agent.connectedAccounts ?? [];
-      for (const dev of usb) {
-        const key = `${agent.agentId}::${dev}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "usb" });
+
+      if (deviceInfo && deviceInfo.length > 0) {
+        // New agent: deviceInfo has real phone numbers
+        for (const dev of deviceInfo) {
+          const key = `${agent.agentId}::${dev.name}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          list.push({
+            key,
+            agentId: agent.agentId,
+            agentHostname: agent.hostname,
+            fromPhone: dev.name,
+            displayName: dev.phone ?? dev.name,
+            phoneNumber: dev.phone ?? undefined,
+            connectionType: dev.connectionType as "usb" | "wifi",
+          });
+        }
+      } else {
+        // Old agent: fall back to raw string arrays (usbDevices = raw hw or sms names)
+        const usb:  string[] = (agent as any).usbDevices ?? [];
+        const wifi: string[] = (agent as any).connectedDevices ?? [];
+        for (const dev of usb) {
+          const key = `${agent.agentId}::${dev}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "usb" });
+        }
+        for (const dev of wifi) {
+          const key = `${agent.agentId}::${dev}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "wifi" });
+        }
       }
-      for (const dev of wifi) {
-        const key = `${agent.agentId}::${dev}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "wifi" });
-      }
+
       for (const a of acct) {
         const key = `${agent.agentId}::${a}`;
         if (seen.has(key)) continue;
@@ -168,12 +191,25 @@ export default function Compose() {
     return list;
   }, [onlineAgents]);
 
-  // True when iPhones are detected via USB but no SMS forwarding services exist.
-  // This means Text Message Forwarding is likely not enabled on the iPhone.
+  // True when iPhones are physically USB-connected but Text Message Forwarding is NOT enabled.
+  // New agents (usbHardwareCount present): real hardware count vs SMS-verified device count.
+  // Old agents (no usbHardwareCount): usbDevices = raw hw names; connectedDevices = SMS services.
   const forwardingNotReady = useMemo(() =>
     onlineAgents.length > 0 &&
-    onlineAgents.every(a => ((a as any).connectedDevices ?? []).length === 0) &&
-    onlineAgents.some(a => ((a as any).usbDevices ?? []).length > 0),
+    onlineAgents.some(agent => {
+      const usbHardwareCount: number | null = (agent as any).usbHardwareCount ?? null;
+      if (usbHardwareCount !== null) {
+        // New agent: real check — iPhones physically connected but no SMS forwarding service
+        const deviceInfo: any[] = (agent as any).deviceInfo ?? [];
+        const usbSmsCount = deviceInfo.filter(d => d.connectionType === "usb").length;
+        return usbHardwareCount > 0 && usbSmsCount === 0;
+      } else {
+        // Old agent fallback: usbDevices has raw hw names, connectedDevices has SMS services
+        const usb: string[] = (agent as any).usbDevices ?? [];
+        const wifi: string[] = (agent as any).connectedDevices ?? [];
+        return usb.length > 0 && wifi.length === 0;
+      }
+    }),
     [onlineAgents],
   );
 
@@ -426,26 +462,58 @@ export default function Compose() {
                 {/* Per-agent status cards */}
                 <div className="grid gap-1.5">
                   {onlineAgents.map(agent => {
+                    const deviceInfo: any[] | null = (agent as any).deviceInfo ?? null;
                     const usb:  string[] = (agent as any).usbDevices ?? [];
                     const wifi: string[] = (agent as any).connectedDevices ?? [];
                     const acct: string[] = agent.connectedAccounts ?? [];
                     const hasUrl = !!(agent as any).macAgentUrl;
+
+                    // Use deviceInfo phone numbers when available (new agent)
+                    const usbDevices = deviceInfo
+                      ? deviceInfo.filter(d => d.connectionType === "usb")
+                      : usb.map(name => ({ name, phone: null }));
+                    const wifiDevices = deviceInfo
+                      ? deviceInfo.filter(d => d.connectionType === "wifi")
+                      : wifi.map(name => ({ name, phone: null }));
+
+                    const summaryParts = [
+                      usbDevices.length  > 0 ? `${usbDevices.length} USB iPhone${usbDevices.length !== 1 ? "s" : ""}` : null,
+                      wifiDevices.length > 0 ? `${wifiDevices.length} Wi-Fi iPhone${wifiDevices.length !== 1 ? "s" : ""}` : null,
+                      acct.length        > 0 ? `${acct.length} iMessage account${acct.length !== 1 ? "s" : ""}` : null,
+                    ].filter(Boolean);
+
+                    // Phone numbers to show inline (max 3 to avoid overflow)
+                    const allNumbers = [...usbDevices, ...wifiDevices]
+                      .map(d => d.phone)
+                      .filter(Boolean) as string[];
+
                     return (
-                      <div key={agent.agentId} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-secondary/30 border border-border text-xs">
-                        <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-foreground truncate">{agent.hostname}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {[
-                              usb.length  > 0 ? `${usb.length} USB iPhone${usb.length !== 1 ? "s" : ""}` : null,
-                              wifi.length > 0 ? `${wifi.length} Wi-Fi iPhone${wifi.length !== 1 ? "s" : ""}` : null,
-                              acct.length > 0 ? `${acct.length} iMessage account${acct.length !== 1 ? "s" : ""}` : null,
-                            ].filter(Boolean).join(" · ") || "No SMS devices"}
-                          </p>
+                      <div key={agent.agentId} className="px-3 py-2.5 rounded-lg bg-secondary/30 border border-border text-xs space-y-1.5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-foreground truncate">{agent.hostname}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {summaryParts.join(" · ") || "No SMS devices"}
+                            </p>
+                          </div>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${hasUrl ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
+                            {hasUrl ? "URL ✓" : "No URL"}
+                          </span>
                         </div>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${hasUrl ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
-                          {hasUrl ? "URL ✓" : "No URL"}
-                        </span>
+                        {/* Phone numbers — only shown when the new agent reports them */}
+                        {allNumbers.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pl-5">
+                            {allNumbers.slice(0, 4).map(phone => (
+                              <span key={phone} className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-secondary border border-border text-foreground/70">
+                                {phone}
+                              </span>
+                            ))}
+                            {allNumbers.length > 4 && (
+                              <span className="text-[10px] text-muted-foreground px-1 py-0.5">+{allNumbers.length - 4} more</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -521,7 +589,15 @@ export default function Compose() {
                           wifi:     { icon: <Wifi  className={`w-4 h-4 ${sel ? "text-blue-400"   : "text-muted-foreground"}`} />, badge: "Wi-Fi",   badgeCls: "bg-blue-500/10 text-blue-400 border-blue-500/20",       accentCls: "border-blue-500/40 bg-blue-500/5"   },
                           imessage: { icon: <MessageSquare className={`w-4 h-4 ${sel ? "text-primary" : "text-muted-foreground"}`} />, badge: "iMessage", badgeCls: "bg-primary/10 text-primary border-primary/20",          accentCls: "border-primary/40 bg-primary/5"     },
                         }[device.connectionType];
-                        const sublabel = { usb: "USB cable · SMS via this iPhone", wifi: "Wi-Fi forwarding · SMS via this iPhone", imessage: "iMessage account" }[device.connectionType];
+                        // Primary label: phone number when known, else service name
+                        const primaryLabel = device.phoneNumber ?? device.displayName;
+                        // Secondary: service name (when phone shown separately) + connection type
+                        const connectionLabel = { usb: "USB cable · SMS", wifi: "Wi-Fi forwarding · SMS", imessage: "iMessage account" }[device.connectionType];
+                        const secondaryParts = [
+                          connectionLabel,
+                          device.phoneNumber ? device.fromPhone : null,
+                          onlineAgents.length > 1 ? device.agentHostname : null,
+                        ].filter(Boolean);
                         return (
                           <button
                             key={device.key}
@@ -542,10 +618,9 @@ export default function Compose() {
                             </div>
                             <div className="shrink-0">{typeColors.icon}</div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-foreground truncate">{device.displayName}</p>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">
-                                {sublabel}
-                                {onlineAgents.length > 1 && <span className="opacity-60"> · {device.agentHostname}</span>}
+                              <p className="text-xs font-semibold text-foreground truncate font-mono">{primaryLabel}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                {secondaryParts.join(" · ")}
                               </p>
                             </div>
                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border shrink-0 ${typeColors.badgeCls}`}>

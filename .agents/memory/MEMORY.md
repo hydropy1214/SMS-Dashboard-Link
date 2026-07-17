@@ -1,1 +1,2 @@
 - [Dispatch heartbeat architecture](dispatch-heartbeat.md) — agents push heartbeats every 30s to /api/agents/heartbeat; status reads from DB (90s offline threshold), not live probes.
+- [Device info phone numbers](device-info-phone-numbers.md) — new agent adds usbHardwareCount + deviceInfo (with real phone numbers) to heartbeat; dual-path logic handles old vs new agent in Compose.
