@@ -248,17 +248,23 @@ if [[ -n "\$DISPATCH_URL" ]]; then
   EXISTING_ID=""
   CONFIG_PATH="\$AGENT_DIR/config.json"
   if [[ -f "\$CONFIG_PATH" ]]; then
-    EXISTING_ID=\$(node -e "try{const c=require('\$CONFIG_PATH');process.stdout.write(c.agentId||'')}catch{}" 2>/dev/null || true)
+    EXISTING_ID=\$(node -e "
+      import { readFileSync } from 'fs';
+      try {
+        const c = JSON.parse(readFileSync('\$CONFIG_PATH', 'utf8'));
+        process.stdout.write(c.agentId || '');
+      } catch {}
+    " 2>/dev/null || true)
   fi
   if [[ -z "\$EXISTING_ID" ]]; then
-    EXISTING_ID=\$(node -e "process.stdout.write(require('crypto').randomUUID())")
+    EXISTING_ID=\$(node -e "import { randomUUID } from 'crypto'; process.stdout.write(randomUUID());")
   fi
   # Strip trailing slash
   CLEAN_URL="\${DISPATCH_URL%/}"
   node -e "
-    const fs = require('fs');
+    import { writeFileSync } from 'fs';
     const cfg = { agentId: '\$EXISTING_ID', dispatchUrl: '\$CLEAN_URL' };
-    fs.writeFileSync('\$CONFIG_PATH', JSON.stringify(cfg, null, 2));
+    writeFileSync('\$CONFIG_PATH', JSON.stringify(cfg, null, 2));
     console.log('  Config saved.');
   "
   success "Dashboard URL saved: \$CLEAN_URL"
@@ -273,6 +279,11 @@ fi
 header "Step 4: Auto-Start (optional)"
 read -r -p "  Install LaunchAgent to start automatically at login? [y/N] " INSTALL_LAUNCH
 if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
+  NODE_BIN=\$(command -v node)
+  if [[ -z "\$NODE_BIN" ]]; then
+    error "Cannot find node binary path. Is Node.js in your PATH?"
+    exit 1
+  fi
   PLIST_DIR="\$HOME/Library/LaunchAgents"
   PLIST_FILE="\$PLIST_DIR/com.dispatch.agent.plist"
   mkdir -p "\$PLIST_DIR"
@@ -285,7 +296,7 @@ if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
   <string>com.dispatch.agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/node</string>
+    <string>\$NODE_BIN</string>
     <string>\$AGENT_DIR/server.js</string>
   </array>
   <key>WorkingDirectory</key>
@@ -306,7 +317,7 @@ if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
 </dict>
 </plist>
 PLISTEOF
-  launchctl load "\$PLIST_FILE" 2>/dev/null && success "LaunchAgent installed and started" || warn "Could not load LaunchAgent automatically. Run: launchctl load \$PLIST_FILE"
+  launchctl load "\$PLIST_FILE" 2>/dev/null && success "LaunchAgent installed and started (using \$NODE_BIN)" || warn "Could not load LaunchAgent automatically. Run: launchctl load \$PLIST_FILE"
 else
   info "Skipping LaunchAgent"
 fi

@@ -82,6 +82,7 @@ export default function Setup() {
   const [testResult, setTestResult] = useState<{
     success: boolean; error?: string; method?: string; durationMs?: number;
   } | null>(null);
+  const [usbGuideOpen, setUsbGuideOpen] = useState(false);
 
   const connected = macStatus?.connected === true;
   const hasUrl = Boolean(settings?.macAgentUrl);
@@ -359,58 +360,53 @@ export default function Setup() {
       )}
 
       {/* ── Step 5: USB iPhones ── */}
-      {(() => {
-        const [usbGuideOpen, setUsbGuideOpen] = React.useState(false);
-        return (
-          <Step n={5} done={false} title="Connect iPhones via USB for faster, more reliable sends">
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              Plug your iPhone into your Mac with a USB cable. USB is more stable than Wi-Fi for Text Message Forwarding
-              — no dropped connections during bulk sends. Each plugged-in iPhone shows up as a selectable sender in{" "}
-              <Link href="/compose"><span className="text-primary hover:underline cursor-pointer">Compose</span></Link>.
-            </p>
+      <Step n={5} done={false} title="Connect iPhones via USB for faster, more reliable sends">
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Plug your iPhone into your Mac with a USB cable. USB is more stable than Wi-Fi for Text Message Forwarding
+          — no dropped connections during bulk sends. Each plugged-in iPhone shows up as a selectable sender in{" "}
+          <Link href="/compose"><span className="text-primary hover:underline cursor-pointer">Compose</span></Link>.
+        </p>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2 p-3 rounded-lg border border-violet-500/20 bg-violet-500/5">
-                <div className="flex items-center gap-2">
-                  <Cable className="w-3.5 h-3.5 text-violet-400" />
-                  <p className="text-xs font-semibold text-foreground">USB connection</p>
-                </div>
-                <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
-                  <li>Stable during long bulk sends</li>
-                  <li>Works with Wi-Fi off</li>
-                  <li>Detected automatically</li>
-                </ul>
-              </div>
-              <div className="space-y-2 p-3 rounded-lg border border-border/60 bg-secondary/10">
-                <div className="flex items-center gap-2">
-                  <Smartphone className="w-3.5 h-3.5 text-muted-foreground" />
-                  <p className="text-xs font-semibold text-foreground">Wi-Fi forwarding</p>
-                </div>
-                <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
-                  <li>Cable-free, more convenient</li>
-                  <li>Can drop under congestion</li>
-                  <li>Requires same Wi-Fi network</li>
-                </ul>
-              </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2 p-3 rounded-lg border border-violet-500/20 bg-violet-500/5">
+            <div className="flex items-center gap-2">
+              <Cable className="w-3.5 h-3.5 text-violet-400" />
+              <p className="text-xs font-semibold text-foreground">USB connection</p>
             </div>
+            <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+              <li>Stable during long bulk sends</li>
+              <li>Works with Wi-Fi off</li>
+              <li>Detected automatically</li>
+            </ul>
+          </div>
+          <div className="space-y-2 p-3 rounded-lg border border-border/60 bg-secondary/10">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-3.5 h-3.5 text-muted-foreground" />
+              <p className="text-xs font-semibold text-foreground">Wi-Fi forwarding</p>
+            </div>
+            <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+              <li>Cable-free, more convenient</li>
+              <li>Can drop under congestion</li>
+              <li>Requires same Wi-Fi network</li>
+            </ul>
+          </div>
+        </div>
 
-            <button
-              onClick={() => setUsbGuideOpen(true)}
-              className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-violet-500/25 bg-violet-500/5 hover:bg-violet-500/10 hover:border-violet-500/40 transition-colors group"
-            >
-              <div className="flex items-center gap-2.5">
-                <Cable className="w-4 h-4 text-violet-400 shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-semibold text-foreground">Step-by-step USB setup guide</p>
-                  <p className="text-[11px] text-muted-foreground">Trust the computer, enable forwarding, and verify in Dispatch</p>
-                </div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-violet-400 opacity-60 group-hover:opacity-100 shrink-0 transition-opacity" />
-            </button>
-            <UsbGuideDialog open={usbGuideOpen} onClose={() => setUsbGuideOpen(false)} />
-          </Step>
-        );
-      })()}
+        <button
+          onClick={() => setUsbGuideOpen(true)}
+          className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-violet-500/25 bg-violet-500/5 hover:bg-violet-500/10 hover:border-violet-500/40 transition-colors group"
+        >
+          <div className="flex items-center gap-2.5">
+            <Cable className="w-4 h-4 text-violet-400 shrink-0" />
+            <div className="text-left">
+              <p className="text-xs font-semibold text-foreground">Step-by-step USB &amp; Wi-Fi setup guide</p>
+              <p className="text-[11px] text-muted-foreground">Trust the computer, enable forwarding, and verify in Dispatch</p>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-violet-400 opacity-60 group-hover:opacity-100 shrink-0 transition-opacity" />
+        </button>
+        <UsbGuideDialog open={usbGuideOpen} onClose={() => setUsbGuideOpen(false)} />
+      </Step>
 
       {/* Multiple phones note */}
       <div className="rounded-xl border border-border/60 bg-secondary/10 p-5">
