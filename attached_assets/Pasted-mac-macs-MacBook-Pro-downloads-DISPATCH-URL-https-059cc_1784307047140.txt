@@ -1,0 +1,63 @@
+mac@macs-MacBook-Pro downloads % DISPATCH_URL="https://059cc59d-d11d-477d-a19b-e0f799a720e8-00-1h06g58nw382v.sisko.replit.dev" bash ~/Downloads/dispatch-agent-setup.sh
+
+  ┌─────────────────────────────────────────────┐
+  │   Dispatch Mac Agent  ·  Installer v4.0     │
+  └─────────────────────────────────────────────┘
+
+
+  ── Step 1: Checking Requirements ──
+
+  ✓ macOS detected
+  ✓ Node.js v24.18.0 (/usr/local/bin/node)
+  ✓ npx available
+
+  ── Step 2: Preparing Clean Start ──
+
+  ✓ Port 3001 is free
+
+  ── Step 3: Installing Agent ──
+
+  ✓ Agent directory: /Users/mac/.dispatch-agent
+  ✓ package.json written
+  ✓ server.js written
+  ✓ Dashboard URL: https://059cc59d-d11d-477d-a19b-e0f799a720e8-00-1h06g58nw382v.sisko.replit.dev
+  ✓ Agent ID: 3fcf68a3-08d6-4ce2-82f0-df132bf2c86f
+  ✓ Tunnel script written
+
+  ── Step 4: Auto-Start ──
+
+  Install as a background service that starts automatically
+  at login? This is recommended — both the agent and tunnel
+  will restart if your Mac reboots.
+
+  Install background service? [Y/n] y
+
+  ✓ Agent service installed and running
+  ✓ Tunnel service installed and running
+
+  ── Step 5: Connecting Tunnel ──
+
+  → Waiting for Cloudflare tunnel URL (up to 60 seconds)...
+  ✓ Tunnel URL: https://copper-receptor-mobility-removed.trycloudflare.com
+  ⚠ Auto-register failed (HTTP 500). Paste this URL into
+  ⚠ Dispatch → Settings → Mac Agent URL:
+
+      https://copper-receptor-mobility-removed.trycloudflare.com
+
+
+  ┌─────────────────────────────────────────────────────┐
+  │  Setup complete!                                    │
+  └─────────────────────────────────────────────────────┘
+
+  ✓ Agent is running in the background (auto-restarts at login)
+  ✓ Tunnel is running in the background (auto-restarts)
+
+  → Useful commands:
+  →   View agent logs : tail -f /Users/mac/.dispatch-agent/logs/agent-stdout.log
+  →   View tunnel logs: tail -f /Users/mac/.dispatch-agent/logs/tunnel-stdout.log
+  →   Stop everything : launchctl unload /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist
+  →   Restart         : launchctl unload /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist && launchctl load /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist
+
+  → You can close this Terminal window — the agent runs in the background.
+
+mac@macs-MacBook-Pro downloads %
