@@ -1,0 +1,627 @@
+I wouldn't recommend giving Replit AI one giant prompt to "change everything." For a project of this size, that usually leads to broken code, inconsistent architecture, and difficult debugging.
+
+A better approach is to have it work from a detailed Product Requirements Document (PRD) and implement the changes in phases. Here's a comprehensive PRD you can give it as the starting point.
+
+# Dispatch v2 - Complete Architecture Refactor PRD
+
+## Goal
+
+Transform the current Dispatch project into a production-grade self-hosted messaging management platform.
+
+The system must remain self-hosted. The Mac Agent is responsible for controlling Messages.app. The web dashboard manages users, campaigns, devices, monitoring, and job scheduling.
+
+The project should prioritize modularity, maintainability, security, observability, and future scalability.
+
+---
+
+# Overall Architecture
+
+```
+Dashboard (React)
+
+↓
+
+Express API
+
+↓
+
+PostgreSQL
+
+↓
+
+Redis Queue
+
+↓
+
+Mac Agent Manager
+
+↓
+
+Secure HTTPS
+
+↓
+
+Mac Agent
+
+↓
+
+Messages.app
+
+↓
+
+iMessage / SMS
+```
+
+The Mac Agent is the only component allowed to interact with AppleScript.
+
+No browser or frontend component may communicate directly with the Mac Agent.
+
+---
+
+# Major Refactor Requirements
+
+Completely reorganize the project into modular services.
+
+Remove any business logic from React components.
+
+All business logic belongs in the API server and Mac Agent.
+
+---
+
+# API Server Responsibilities
+
+The API server becomes the central coordinator.
+
+Responsibilities include:
+
+* Authentication
+* User management
+* Campaign management
+* Device management
+* Queue management
+* Audit logging
+* Health monitoring
+* Settings
+* Mac registration
+* Metrics
+* Analytics
+
+The API server must never execute AppleScript.
+
+---
+
+# Database Changes
+
+Add new tables:
+
+Users
+
+Devices
+
+Campaigns
+
+CampaignJobs
+
+CampaignRecipients
+
+MacAgents
+
+AgentHeartbeats
+
+ConnectedSenders
+
+AuditLogs
+
+DeviceGroups
+
+Queues
+
+ScheduledCampaigns
+
+RateLimits
+
+SystemEvents
+
+Do not store only "messages".
+
+The database should model the entire system.
+
+---
+
+# Queue System
+
+Replace direct sending.
+
+Every send request becomes a Job.
+
+Workflow:
+
+Campaign
+
+↓
+
+Recipient Jobs
+
+↓
+
+Queue
+
+↓
+
+Assigned Sender
+
+↓
+
+Mac Agent Worker
+
+↓
+
+Messages.app
+
+↓
+
+Result
+
+Support:
+
+Retry
+
+Pause
+
+Resume
+
+Cancel
+
+Priority
+
+Scheduled delivery
+
+---
+
+# Device Manager
+
+Create a dedicated Device Manager service.
+
+Responsibilities:
+
+Discover available Messages accounts
+
+Monitor connected devices
+
+Track online/offline state
+
+Track health
+
+Track queue size
+
+Track version
+
+Track last heartbeat
+
+Dashboard must show:
+
+Device Name
+
+Device ID
+
+Mac Name
+
+Status
+
+Last Seen
+
+Version
+
+Queue
+
+CPU
+
+RAM
+
+Disk
+
+OS
+
+---
+
+# Sender Management
+
+Create Connected Sender entities.
+
+Each sender should have:
+
+Sender ID
+
+Type
+
+Phone Number
+
+Apple ID
+
+Status
+
+Assigned Campaigns
+
+Queue
+
+Health
+
+Supported sender types:
+
+iMessage
+
+SMS Forwarding
+
+Future provider integrations
+
+Dashboard must allow selecting sender(s) for a campaign.
+
+If explicit sender selection is unavailable due to Messages.app limitations, provide an Auto mode that lets Messages.app determine the route.
+
+---
+
+# Mac Agent Refactor
+
+Split the Mac Agent into modules.
+
+mac-agent/
+
+config/
+
+routes/
+
+services/
+
+workers/
+
+queue/
+
+monitor/
+
+auth/
+
+storage/
+
+logger/
+
+system/
+
+messages/
+
+startup/
+
+updater/
+
+index.ts
+
+Each module should have one responsibility.
+
+---
+
+# Mac Agent Startup
+
+Startup sequence:
+
+Load config
+
+Validate configuration
+
+Check Node version
+
+Check macOS version
+
+Check AppleScript
+
+Check Messages.app
+
+Check permissions
+
+Load queue
+
+Register with server
+
+Start heartbeat
+
+Start worker
+
+Accept jobs
+
+---
+
+# Heartbeat System
+
+Every 20 seconds send:
+
+Agent version
+
+Mac version
+
+Hostname
+
+CPU
+
+Memory
+
+Disk
+
+Queue size
+
+Connected senders
+
+Messages status
+
+AppleScript status
+
+Uptime
+
+Current jobs
+
+The dashboard updates live.
+
+---
+
+# Setup Installer
+
+Replace the current setup.sh.
+
+The installer must:
+
+Detect macOS version
+
+Install Homebrew if missing
+
+Install Node if missing
+
+Install dependencies
+
+Generate Device ID
+
+Generate API key
+
+Generate config
+
+Register device
+
+Install LaunchAgent
+
+Start automatically
+
+Perform health checks
+
+Display success summary
+
+The installer should require as little manual work as possible.
+
+---
+
+# Security
+
+Never trust only the tunnel URL.
+
+Every Mac Agent receives:
+
+Unique Device ID
+
+Random API Key
+
+Signed authentication
+
+Timestamp validation
+
+Replay protection
+
+Encrypted local config
+
+Audit logging
+
+Never expose unauthenticated send endpoints.
+
+---
+
+# Logging
+
+Implement structured logging.
+
+Separate logs into:
+
+System
+
+Jobs
+
+Errors
+
+Queue
+
+Messages
+
+Agent
+
+Installer
+
+Support log rotation.
+
+---
+
+# Dashboard
+
+Redesign pages.
+
+Dashboard
+
+Overview
+
+Connected Macs
+
+Connected Senders
+
+Campaigns
+
+Queue
+
+Activity
+
+Analytics
+
+System Health
+
+Audit Logs
+
+Settings
+
+Installer
+
+Every page must use TanStack Query.
+
+---
+
+# Campaign Workflow
+
+User creates campaign.
+
+↓
+
+Validate recipients.
+
+↓
+
+Remove duplicates.
+
+↓
+
+Normalize phone numbers.
+
+↓
+
+Create jobs.
+
+↓
+
+Assign sender.
+
+↓
+
+Queue.
+
+↓
+
+Mac Agent processes jobs.
+
+↓
+
+Status updates.
+
+↓
+
+Analytics update.
+
+Never send synchronously.
+
+---
+
+# Monitoring
+
+Add live monitoring.
+
+Mac Online
+
+Messages Running
+
+AppleScript Ready
+
+Connected Senders
+
+Queue Length
+
+Jobs Running
+
+CPU
+
+RAM
+
+Disk
+
+Latency
+
+Heartbeat
+
+---
+
+# Analytics
+
+Dashboard should display:
+
+Messages Today
+
+Success Rate
+
+Failed Rate
+
+Queue Size
+
+Average Send Time
+
+Top Devices
+
+Campaign Performance
+
+Historical Charts
+
+---
+
+# Auto Update
+
+Mac Agent checks for new releases.
+
+Download update.
+
+Verify version.
+
+Restart automatically.
+
+Rollback if update fails.
+
+---
+
+# Code Quality
+
+Strict TypeScript
+
+ESLint
+
+Prettier
+
+Zod validation
+
+OpenAPI generated client
+
+Dependency injection
+
+Unit tests
+
+Error boundaries
+
+Comprehensive error handling
+
+No duplicated logic
+
+---
+
+# Future Scalability
+
+Design the system so one account can manage:
+
+Many Macs
+
+Many campaigns
+
+Many users
+
+Many sender identities
+
+Many queues
+
+without changing the architecture.
+
+The codebase should be modular, production-ready, and easy to extend while preserving the existing self-hosted model where the Mac Agent controls Messages.app.
+
+After this refactor is complete and stable, a second phase can add features such as advanced scheduling, templates, contact management, user roles, notifications, and richer analytics. Trying to implement everything in one pass is likely to make the project unstable, so it's better to complete and verify the architectural refactor before expanding functionality.
