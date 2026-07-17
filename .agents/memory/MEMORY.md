@@ -1,0 +1,1 @@
+- [Dispatch heartbeat architecture](dispatch-heartbeat.md) — agents push heartbeats every 30s to /api/agents/heartbeat; status reads from DB (90s offline threshold), not live probes.

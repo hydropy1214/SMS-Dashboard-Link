@@ -5,8 +5,12 @@ import { Shell } from '@/components/layout/Shell';
 import { Toaster } from 'sonner';
 
 // Pages
+import Dashboard from '@/pages/Dashboard';
 import Compose from '@/pages/Compose';
 import Activity from '@/pages/Activity';
+import ConnectedMacs from '@/pages/ConnectedMacs';
+import Devices from '@/pages/Devices';
+import Logs from '@/pages/Logs';
 import Setup from '@/pages/Setup';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/not-found';
@@ -24,8 +28,12 @@ function Router() {
   return (
     <Shell>
       <Switch>
-        <Route path="/" component={Compose} />
+        <Route path="/" component={Dashboard} />
+        <Route path="/compose" component={Compose} />
         <Route path="/activity" component={Activity} />
+        <Route path="/macs" component={ConnectedMacs} />
+        <Route path="/devices" component={Devices} />
+        <Route path="/logs" component={Logs} />
         <Route path="/setup" component={Setup} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />

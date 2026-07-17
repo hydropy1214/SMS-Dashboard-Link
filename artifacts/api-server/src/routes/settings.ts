@@ -6,67 +6,54 @@ import { z } from "zod";
 
 const router = Router();
 
-const settingsInputSchema = z.object({
-  macAgentUrl: z.string().url().nullable(),
-});
-
-async function getSetting(key: string): Promise<string | null> {
-  const rows = await db
-    .select()
-    .from(settingsTable)
-    .where(eq(settingsTable.key, key))
-    .limit(1);
-  return rows[0]?.value ?? null;
-}
-
-async function setSetting(key: string, value: string | null): Promise<void> {
-  await db
-    .insert(settingsTable)
-    .values({ key, value })
-    .onConflictDoUpdate({
-      target: settingsTable.key,
-      set: { value, updatedAt: new Date() },
-    });
-}
-
-// GET /api/settings
+// GET /api/settings — return all settings as a key→value map
 router.get("/settings", async (req, res) => {
   try {
     const rows = await db.select().from(settingsTable);
-    const map = Object.fromEntries(rows.map((r) => [r.key, r]));
-    const macRow = map["macAgentUrl"];
-    res.json({
-      macAgentUrl: macRow?.value ?? null,
-      updatedAt: macRow?.updatedAt?.toISOString() ?? new Date().toISOString(),
-    });
+    const map: Record<string, string | null> = {};
+    for (const r of rows) {
+      map[r.key] = r.value ?? null;
+    }
+    res.json(map);
   } catch (err) {
-    req.log.error({ err }, "Failed to get settings");
-    res.status(500).json({ error: "Failed to get settings" });
+    req.log.error({ err }, "Failed to fetch settings");
+    res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
 
-// POST /api/settings
-router.post("/settings", async (req, res) => {
-  const parsed = settingsInputSchema.safeParse(req.body);
+// PATCH /api/settings — update one or more keys
+const settingsSchema = z.record(z.string().min(1), z.string().nullable());
+
+router.patch("/settings", async (req, res) => {
+  const parsed = settingsSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid settings data" });
+    res.status(400).json({ error: "Invalid settings payload" });
     return;
   }
 
   try {
-    await setSetting("macAgentUrl", parsed.data.macAgentUrl);
+    const now = new Date();
+    for (const [key, value] of Object.entries(parsed.data)) {
+      await db
+        .insert(settingsTable)
+        .values({ key, value, updatedAt: now })
+        .onConflictDoUpdate({
+          target: settingsTable.key,
+          set: { value, updatedAt: now },
+        });
+    }
+
+    // Return updated settings
     const rows = await db.select().from(settingsTable);
-    const map = Object.fromEntries(rows.map((r) => [r.key, r]));
-    const macRow = map["macAgentUrl"];
-    res.json({
-      macAgentUrl: macRow?.value ?? null,
-      updatedAt: macRow?.updatedAt?.toISOString() ?? new Date().toISOString(),
-    });
+    const map: Record<string, string | null> = {};
+    for (const r of rows) {
+      map[r.key] = r.value ?? null;
+    }
+    res.json(map);
   } catch (err) {
     req.log.error({ err }, "Failed to update settings");
     res.status(500).json({ error: "Failed to update settings" });
   }
 });
 
-export { getSetting };
 export default router;

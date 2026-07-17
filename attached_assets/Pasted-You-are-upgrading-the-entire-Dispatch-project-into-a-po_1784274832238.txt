@@ -1,0 +1,460 @@
+You are upgrading the entire Dispatch project into a polished, production-quality self-hosted messaging platform. This is a complete architecture refactor, not a phased migration. Replace the existing implementation where necessary while preserving the overall purpose of the project. The final result should feel like a professional SaaS product rather than a prototype.
+
+The core concept remains the same:
+
+A user opens the Dispatch web dashboard, pastes phone numbers, writes a message, clicks Send, and the message is delivered through the user's own Mac using Messages.app and AppleScript. The system must continue to be completely self-hosted with no third-party messaging APIs and no per-message costs.
+
+The project should be redesigned around reliability, maintainability, and scalability while keeping the user experience extremely simple.
+
+The backend should become the central coordinator. It should manage all data, monitor connected Macs, maintain message history, store configuration, and communicate with Mac Agents. The backend should never contain AppleScript logic. Only the Mac Agent should interact with Messages.app.
+
+The Mac Agent should become a standalone application instead of a single script. Organize it into clear modules such as server, sender, AppleScript execution, settings, heartbeat, device detection, logging, health checks, and utilities. Every responsibility should have its own file so the project remains easy to extend.
+
+The Mac Agent should automatically:
+
+* Detect whether Messages.app is installed.
+* Detect whether Messages.app is currently running.
+* Detect whether AppleScript automation permissions are available.
+* Detect available iMessage accounts.
+* Detect available SMS forwarding devices.
+* Detect macOS version.
+* Detect Node.js version.
+* Detect CPU usage.
+* Detect memory usage.
+* Detect uptime.
+* Detect hostname.
+* Generate a unique Agent ID during first startup.
+* Store configuration locally.
+* Automatically reconnect if the backend becomes unavailable.
+* Retry failed requests using exponential backoff.
+* Keep detailed local logs.
+
+The backend should continuously know the status of every connected Mac.
+
+Every 30 seconds the Mac Agent should send a heartbeat containing:
+
+* Agent ID
+* Hostname
+* Operating System
+* macOS Version
+* Node Version
+* Agent Version
+* Messages.app status
+* AppleScript availability
+* Connected accounts
+* Connected SMS forwarding devices
+* Current latency
+* CPU usage
+* Memory usage
+* Queue size
+* Last activity timestamp
+
+The dashboard should always display the live connection state without requiring manual refresh.
+
+The current Settings page should be redesigned into a proper system management page.
+
+It should include:
+
+General Settings
+
+Mac Agent URL
+
+Connection Status
+
+Last Heartbeat
+
+Latency
+
+Agent Version
+
+Messages Status
+
+AppleScript Status
+
+Tunnel Provider
+
+Hostname
+
+Connected Accounts
+
+Connected SMS Devices
+
+Local Queue
+
+System Health
+
+Recent Errors
+
+System Information
+
+The dashboard should include the following navigation:
+
+Dashboard
+
+Compose
+
+Activity
+
+Connected Macs
+
+Devices
+
+Logs
+
+Settings
+
+Dashboard should provide a live overview containing:
+
+Current Mac Status
+
+Current Connection Status
+
+Messages Ready
+
+AppleScript Ready
+
+Connected Accounts
+
+Connected Devices
+
+Messages Sent Today
+
+Messages Failed Today
+
+Pending Messages
+
+Average Send Time
+
+Last Heartbeat
+
+Recent Activity
+
+System Health
+
+Compose should become much more polished.
+
+Users should be able to:
+
+Paste phone numbers
+
+Upload CSV
+
+Upload TXT
+
+Remove duplicate numbers automatically
+
+Remove invalid numbers automatically
+
+Preview recipient count
+
+Write message
+
+View character count
+
+View estimated SMS segments
+
+Start sending
+
+Cancel sending
+
+See live progress
+
+See current recipient
+
+See success count
+
+See failed count
+
+See remaining count
+
+See estimated completion time
+
+Activity should become a complete message history viewer.
+
+Each message should include:
+
+Phone Number
+
+Content
+
+Status
+
+Timestamp
+
+Delivery Result
+
+Error Message
+
+Agent Used
+
+Device Information
+
+Duration
+
+Retry Count
+
+The Activity page should support:
+
+Search
+
+Filtering
+
+Pagination
+
+Sorting
+
+Export to CSV
+
+Export to JSON
+
+Delete History
+
+Connected Macs should display every active Mac Agent.
+
+Each card should show:
+
+Hostname
+
+Status
+
+Online or Offline
+
+Latency
+
+Version
+
+CPU Usage
+
+Memory Usage
+
+Connected Accounts
+
+Connected Devices
+
+Queue Size
+
+Last Heartbeat
+
+Operating System
+
+Devices should list every available sending account detected from Messages.app.
+
+Display:
+
+Display Name
+
+Service
+
+iMessage Account
+
+SMS Forwarding Device
+
+Availability
+
+Last Used
+
+Status
+
+Logs should display both backend and Mac Agent events.
+
+Include timestamps, severity, category, and readable descriptions.
+
+Support searching, filtering, downloading, and automatic refreshing.
+
+The backend should expose clean REST APIs.
+
+Instead of a single send endpoint, organize APIs into logical resources for:
+
+Messages
+
+Activity
+
+Settings
+
+Mac Agents
+
+Devices
+
+System
+
+Status
+
+Health
+
+Downloads
+
+The database should be expanded.
+
+Keep the existing tables but normalize the schema.
+
+Suggested tables include:
+
+messages
+
+settings
+
+mac_agents
+
+heartbeats
+
+devices
+
+system_logs
+
+activity_logs
+
+Store complete timestamps for every operation.
+
+Every important action should create an activity record.
+
+Improve validation throughout the entire application.
+
+Validate:
+
+Phone numbers
+
+Tunnel URLs
+
+Settings
+
+API requests
+
+Responses
+
+Environment variables
+
+AppleScript inputs
+
+Prevent crashes caused by malformed requests.
+
+Improve security.
+
+Never execute unsanitized AppleScript.
+
+Validate every parameter before execution.
+
+Protect backend APIs.
+
+Store secrets securely.
+
+Never expose internal system paths.
+
+Improve logging everywhere.
+
+Every important operation should produce structured logs.
+
+Examples include:
+
+Mac connected
+
+Mac disconnected
+
+Heartbeat received
+
+Message queued
+
+Message sent
+
+Message failed
+
+AppleScript error
+
+Tunnel unreachable
+
+Messages.app closed
+
+Messages.app reopened
+
+Connection restored
+
+Backend restarted
+
+Improve the installer.
+
+The setup script should perform a complete installation automatically.
+
+It should:
+
+Check macOS compatibility.
+
+Check Node.js.
+
+Install dependencies if necessary.
+
+Create a DispatchAgent directory.
+
+Install the latest Mac Agent.
+
+Generate Agent ID.
+
+Generate configuration.
+
+Create log directory.
+
+Verify AppleScript permissions.
+
+Verify Messages.app.
+
+Offer Cloudflare Tunnel setup.
+
+Offer ngrok setup.
+
+Start the agent.
+
+Optionally install a LaunchAgent so the Mac Agent automatically starts whenever the user logs into macOS.
+
+The installer should clearly explain every step and display meaningful success or failure messages.
+
+Improve code quality across the project.
+
+Remove duplicated logic.
+
+Create reusable utility modules.
+
+Use proper TypeScript typing everywhere.
+
+Improve error handling.
+
+Improve folder organization.
+
+Improve naming consistency.
+
+Improve comments.
+
+Improve documentation.
+
+Remove dead code.
+
+Ensure all packages build without warnings.
+
+Maintain full compatibility with the current technology stack:
+
+React 19
+
+Vite
+
+TailwindCSS
+
+TanStack Query
+
+Express 5
+
+TypeScript
+
+PostgreSQL
+
+Drizzle ORM
+
+OpenAPI
+
+Zod
+
+Node.js
+
+AppleScript
+
+Cloudflare Tunnel
+
+ngrok
+
+Do not remove any existing functionality unless it is replaced by a better implementation. Preserve the current user workflow while making the entire project significantly more reliable, easier to maintain, and polished enough to feel like a production-ready application.

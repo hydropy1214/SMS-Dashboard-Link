@@ -4,332 +4,299 @@ import {
   useUpdateSettings,
   useGetMacAgentStatus,
   getGetMacAgentStatusQueryKey,
+  getGetSettingsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Settings as SettingsIcon, Download, CheckCircle2, XCircle, RefreshCw,
-  Globe, Zap, Loader2, ArrowRight, Smartphone, Plus, Info,
+  Settings as SettingsIcon, Wifi, WifiOff, Save, RefreshCw,
+  Loader2, CheckCircle2, AlertCircle, Clock, Monitor, Zap,
+  MessageSquare, Smartphone, ExternalLink, Download,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Link } from "wouter";
+import { formatDistanceToNow } from "date-fns";
+import { Badge } from "@/components/ui/badge";
 
-/* ─── fetch accounts from Mac Agent via API ──────────────── */
-async function fetchAccounts(apiBase: string): Promise<{ accounts: string[]; error?: string }> {
-  const r = await fetch(`${apiBase}/api/mac-agent/accounts`);
-  if (!r.ok) return { accounts: [], error: `Server error ${r.status}` };
-  return r.json();
-}
-
-/* ─── helpers ────────────────────────────────────────────── */
-function getApiBase() {
-  return import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <p className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-widest mb-3">
-      {children}
-    </p>
-  );
-}
-
-function InfoRow({ label, value, ok }: { label: string; value: string; ok?: boolean | null }) {
-  const color = ok === true ? "text-emerald-400" : ok === false ? "text-destructive" : "text-foreground";
-  return (
-    <div className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0">
-      <span className="text-muted-foreground font-medium">{label}</span>
-      <span className={`font-mono font-medium ${color}`}>{value}</span>
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border flex items-center gap-2.5">
+        <span className="text-primary">{icon}</span>
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      </div>
+      <div className="p-5 space-y-4">{children}</div>
     </div>
   );
 }
 
-/* ─── component ─────────────────────────────────────────── */
+function StatusRow({ label, ok, text }: { label: string; ok: boolean | null; text?: string }) {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-2">
+        {text && <span className="text-xs font-mono text-muted-foreground">{text}</span>}
+        {ok === null ? (
+          <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" />Unknown</span>
+        ) : ok ? (
+          <span className="text-xs text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Ready</span>
+        ) : (
+          <span className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />Not Ready</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const queryClient = useQueryClient();
-  const { data: settings, isLoading: loadingSettings } = useGetSettings();
-  const updateSettings = useUpdateSettings();
-  const { data: macStatus, isFetching: fetchingStatus, isLoading: loadingStatus } = useGetMacAgentStatus({
-    query: { queryKey: getGetMacAgentStatusQueryKey(), refetchInterval: 8000, retry: false, staleTime: 0 },
+
+  const { data: settings, isLoading: settingsLoading } = useGetSettings({
+    query: { queryKey: getGetSettingsQueryKey(), staleTime: 5000 },
   });
 
-  const [urlInput, setUrlInput] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
+  const { data: macStatus, isFetching: statusFetching, refetch: refetchStatus } = useGetMacAgentStatus({
+    query: {
+      queryKey: getGetMacAgentStatusQueryKey(),
+      refetchInterval: 10_000,
+      retry: false,
+      staleTime: 0,
+    },
+  });
+
+  const updateSettings = useUpdateSettings();
+
+  const [macAgentUrl, setMacAgentUrl] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (settings?.macAgentUrl && !isDirty) setUrlInput(settings.macAgentUrl);
-  }, [settings?.macAgentUrl]);
+    if (settings?.macAgentUrl != null) {
+      setMacAgentUrl(settings.macAgentUrl ?? "");
+    }
+  }, [settings]);
 
-  // Fetch accounts when Mac Agent is connected
-  const { data: accountsData, isFetching: fetchingAccounts, refetch: refetchAccounts } = useQuery({
-    queryKey: ["mac-agent-accounts"],
-    queryFn: () => fetchAccounts(getApiBase()),
-    enabled: macStatus?.connected === true,
-    staleTime: 30_000,
-    retry: false,
-  });
-
-  const isConnected = macStatus?.connected === true;
-  const savedUrl = settings?.macAgentUrl;
-
-  // Detect tunnel type
-  const urlLower = urlInput.toLowerCase();
-  const tunnelTag = urlLower.includes("ngrok") ? "ngrok"
-    : urlLower.includes("trycloudflare") || urlLower.includes("cloudflare") ? "cloudflare"
-    : null;
-
-  const handleSave = () => {
-    const trimmed = urlInput.trim();
+  const handleSave = async () => {
+    const url = macAgentUrl.trim();
+    if (url && !url.startsWith("http")) {
+      toast.error("URL must start with http:// or https://");
+      return;
+    }
+    setSaving(true);
     updateSettings.mutate(
-      { data: { macAgentUrl: trimmed || null } },
+      { data: { macAgentUrl: url || null } },
       {
         onSuccess: () => {
-          toast.success("Saved — testing connection…");
-          setIsDirty(false);
-          setTimeout(() => {
-            queryClient.invalidateQueries({ queryKey: getGetMacAgentStatusQueryKey() });
-          }, 400);
+          toast.success("Settings saved");
+          queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetMacAgentStatusQueryKey() });
         },
-        onError: (err: any) => toast.error("Save failed: " + (err?.error ?? "Unknown error")),
-      }
+        onError: () => toast.error("Failed to save settings"),
+        onSettled: () => setSaving(false),
+      },
     );
   };
 
-  return (
-    <div className="space-y-6 pb-12 max-w-2xl">
+  const isConnected = macStatus?.connected === true;
 
+  // Detect tunnel provider from URL
+  function detectTunnel(url: string | null | undefined): string {
+    if (!url) return "None";
+    if (url.includes("trycloudflare.com") || url.includes("cloudflare")) return "Cloudflare Tunnel";
+    if (url.includes("ngrok.io") || url.includes("ngrok.app")) return "ngrok";
+    if (url.includes("localhost") || url.includes("127.0.0.1")) return "Local (no tunnel)";
+    return "Custom";
+  }
+
+  const downloadUrl = `${window.location.origin}/api/agents/download`;
+
+  return (
+    <div className="space-y-6 pb-12">
       {/* Header */}
       <div>
         <div className="flex items-center gap-2.5 mb-1">
           <SettingsIcon className="w-5 h-5 text-primary" />
           <h1 className="text-xl font-semibold text-foreground tracking-tight">Settings</h1>
         </div>
-        <p className="text-sm text-muted-foreground">Configure Mac Agent connection and connected devices.</p>
+        <p className="text-sm text-muted-foreground">System configuration and Mac Agent management</p>
       </div>
 
-      {/* ── Connection ─────────────────────────────────────── */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-lg">
-        <div className="h-[2px] bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-        <div className="p-5 space-y-5">
-
-          <SectionLabel>Mac Agent Connection</SectionLabel>
-
-          {/* URL input */}
-          <div className="space-y-2">
-            <Label htmlFor="url" className="text-xs font-medium text-muted-foreground">Tunnel URL</Label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  id="url"
-                  placeholder="https://something.trycloudflare.com"
-                  value={urlInput}
-                  onChange={e => { setUrlInput(e.target.value); setIsDirty(true); }}
-                  className="font-mono text-sm bg-input/40 border-border focus-visible:border-primary/40 focus-visible:ring-primary/20 pr-24"
-                  disabled={loadingSettings}
-                />
-                {tunnelTag && (
-                  <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded ${
-                    tunnelTag === "ngrok" ? "bg-orange-500/15 text-orange-400"
-                                         : "bg-sky-500/15 text-sky-400"
-                  }`}>
-                    {tunnelTag}
-                  </span>
-                )}
-              </div>
-              <Button
-                onClick={handleSave}
-                disabled={updateSettings.isPending || loadingSettings || (!isDirty && !!savedUrl)}
-                className="shrink-0 font-medium"
-              >
-                {updateSettings.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Paste the HTTPS URL from Cloudflare or ngrok.{" "}
-              <Link href="/setup" className="text-primary hover:underline">
-                Setup guide <ArrowRight className="inline w-3 h-3" />
-              </Link>
-            </p>
+      {/* General Settings */}
+      <Section title="General Settings" icon={<SettingsIcon className="w-4 h-4" />}>
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+            Mac Agent URL
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder="https://abc123.trycloudflare.com"
+              value={macAgentUrl}
+              onChange={e => setMacAgentUrl(e.target.value)}
+              className="flex-1 bg-input/40 font-mono text-sm"
+            />
+            <Button
+              onClick={handleSave}
+              disabled={saving}
+              className="gap-2 dispatch-glow shrink-0"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save
+            </Button>
           </div>
-
-          {/* Status panel */}
-          <div className="rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 bg-secondary/30 border-b border-border">
-              <span className="text-xs font-medium text-muted-foreground">Connection Status</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs border-border bg-secondary/30 hover:border-primary/30 hover:text-primary"
-                disabled={fetchingStatus}
-                onClick={() => queryClient.invalidateQueries({ queryKey: getGetMacAgentStatusQueryKey() })}
-              >
-                <RefreshCw className={`w-3 h-3 mr-1.5 ${fetchingStatus ? "animate-spin" : ""}`} />
-                Test
-              </Button>
-            </div>
-
-            <div className="p-4">
-              {loadingStatus ? (
-                <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
-                </div>
-              ) : isConnected ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
-                    <CheckCircle2 className="w-4 h-4" /> Connected
-                  </div>
-                  <div className="space-y-0">
-                    <InfoRow label="Latency" value={macStatus?.latencyMs ? `${macStatus.latencyMs}ms` : "—"} />
-                    <InfoRow label="Platform" value={macStatus?.platform ?? "—"} />
-                    <InfoRow label="Messages.app" value={macStatus?.messagesAppAvailable ? "Ready" : "Not detected"} ok={macStatus?.messagesAppAvailable} />
-                    <InfoRow label="AppleScript" value={macStatus?.appleScriptAvailable ? "Ready" : "Unavailable"} ok={macStatus?.appleScriptAvailable} />
-                  </div>
-                  {!macStatus?.messagesAppAvailable && (
-                    <p className="text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/15 rounded-lg px-3 py-2">
-                      Messages.app isn't open — launch it on your Mac and keep it running.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-destructive font-semibold text-sm">
-                    <XCircle className="w-4 h-4" />
-                    {savedUrl ? "Agent unreachable" : "No URL configured"}
-                  </div>
-                  {macStatus?.error && (
-                    <p className="text-xs font-mono text-destructive/75 bg-destructive/5 border border-destructive/15 rounded-lg px-3 py-2">
-                      {macStatus.error}
-                    </p>
-                  )}
-                  {savedUrl
-                    ? <p className="text-xs text-muted-foreground">Make sure the Mac Agent is running and the tunnel is active.</p>
-                    : <p className="text-xs text-muted-foreground">Enter your tunnel URL above and click Save.</p>
-                  }
-                </div>
-              )}
-            </div>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            The HTTPS tunnel URL pointing to your Mac Agent (port 3001).
+          </p>
         </div>
-      </div>
+      </Section>
 
-      {/* ── Connected Devices ──────────────────────────────── */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-lg">
-        <div className="p-5 space-y-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <SectionLabel>Connected Devices</SectionLabel>
-            </div>
-            {isConnected && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs border-border hover:border-primary/30 hover:text-primary -mt-3"
-                onClick={() => refetchAccounts()}
-                disabled={fetchingAccounts}
-              >
-                <RefreshCw className={`w-3 h-3 mr-1.5 ${fetchingAccounts ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
+      {/* Connection Status */}
+      <Section title="Connection Status" icon={<Wifi className="w-4 h-4" />}>
+        {/* Live status banner */}
+        <div className={`flex items-center gap-3 p-3.5 rounded-lg border ${
+          isConnected
+            ? "border-emerald-500/20 bg-emerald-500/5"
+            : "border-destructive/20 bg-destructive/5"
+        }`}>
+          <div className="relative w-8 h-8 shrink-0 flex items-center justify-center">
+            {statusFetching ? (
+              <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+            ) : isConnected ? (
+              <>
+                <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-20" />
+                <Wifi className="w-4 h-4 text-emerald-400 relative z-10" />
+              </>
+            ) : (
+              <WifiOff className="w-4 h-4 text-destructive" />
             )}
           </div>
+          <div className="flex-1">
+            <p className={`text-sm font-semibold ${isConnected ? "text-emerald-300" : "text-destructive"}`}>
+              {isConnected ? "Connected" : "Not Connected"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {macStatus?.error ?? (isConnected ? "Mac Agent is responding normally" : "Mac Agent unreachable")}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => refetchStatus()}>
+            <RefreshCw className={`w-3 h-3 mr-1 ${statusFetching ? "animate-spin" : ""}`} />
+            Test
+          </Button>
+        </div>
 
-          {!isConnected ? (
-            <div className="flex items-start gap-3 p-4 rounded-lg border border-border bg-secondary/20">
-              <Info className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div className="text-sm text-muted-foreground leading-relaxed">
-                Connect your Mac Agent to see which messaging accounts are available.
-                Each iPhone you've enabled <strong className="text-foreground">Text Message Forwarding</strong> for will appear here.
-              </div>
-            </div>
-          ) : fetchingAccounts && !accountsData ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading accounts from Mac…
-            </div>
-          ) : accountsData?.accounts && accountsData.accounts.length > 0 ? (
+        {/* Status details */}
+        <div className="space-y-0 divide-y divide-border/50">
+          <StatusRow label="Connection" ok={isConnected} />
+          <StatusRow
+            label="Last Heartbeat"
+            ok={macStatus?.lastHeartbeat ? true : null}
+            text={macStatus?.lastHeartbeat
+              ? formatDistanceToNow(new Date(macStatus.lastHeartbeat), { addSuffix: true })
+              : undefined}
+          />
+          <StatusRow
+            label="Latency"
+            ok={macStatus?.latencyMs != null ? macStatus.latencyMs < 1000 : null}
+            text={macStatus?.latencyMs != null ? `${macStatus.latencyMs}ms` : undefined}
+          />
+          <StatusRow
+            label="Agent Version"
+            ok={isConnected}
+            text={macStatus?.agentVersion ?? undefined}
+          />
+          <StatusRow
+            label="Messages.app"
+            ok={macStatus?.messagesAppAvailable ?? null}
+          />
+          <StatusRow
+            label="AppleScript"
+            ok={macStatus?.appleScriptAvailable ?? null}
+          />
+          <StatusRow
+            label="Tunnel Provider"
+            ok={null}
+            text={detectTunnel(macStatus?.url)}
+          />
+          <StatusRow
+            label="Hostname"
+            ok={null}
+            text={macStatus?.hostname ?? undefined}
+          />
+        </div>
+      </Section>
+
+      {/* Connected Accounts */}
+      {isConnected && ((macStatus?.connectedAccounts?.length ?? 0) > 0 || (macStatus?.connectedDevices?.length ?? 0) > 0) && (
+        <Section title="Connected Accounts & Devices" icon={<MessageSquare className="w-4 h-4" />}>
+          {(macStatus?.connectedAccounts?.length ?? 0) > 0 && (
             <div className="space-y-2">
-              {accountsData.accounts.map((acc, i) => (
-                <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-emerald-500/15 bg-emerald-500/5">
-                  <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{acc}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">Messages.app account</p>
-                  </div>
-                  <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                    Active
-                  </span>
-                </div>
-              ))}
-              <div className="pt-1 px-1">
-                <p className="text-xs text-muted-foreground">
-                  <strong className="text-foreground">Adding a phone:</strong> On your iPhone, go to{" "}
-                  <span className="font-mono text-foreground/80 text-[11px]">Settings → Messages → Text Message Forwarding</span>{" "}
-                  and toggle your Mac on. It will appear here after reconnecting.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 p-4 rounded-lg border border-border bg-secondary/20">
-                <Info className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  No messaging accounts found in Messages.app.
-                  Make sure Messages.app is open and you're signed in with your Apple ID.
-                  {accountsData?.error && <span className="block mt-1 font-mono text-[11px] text-destructive/70">{accountsData.error}</span>}
-                </p>
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                <MessageSquare className="w-3 h-3 text-primary" /> iMessage Accounts
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {macStatus!.connectedAccounts!.map(acct => (
+                  <Badge key={acct} className="font-mono text-[11px] bg-primary/8 text-primary border-primary/20">
+                    {acct}
+                  </Badge>
+                ))}
               </div>
             </div>
           )}
+          {(macStatus?.connectedDevices?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                <Smartphone className="w-3 h-3 text-amber-400" /> SMS Forwarding Devices
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {macStatus!.connectedDevices!.map(dev => (
+                  <Badge key={dev} className="font-mono text-[11px] bg-amber-500/8 text-amber-400 border-amber-500/20">
+                    {dev}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
 
-          {/* How to connect more */}
-          <div className="rounded-lg border border-border/50 bg-secondary/10 p-4 space-y-2">
-            <p className="text-xs font-semibold text-foreground flex items-center gap-2">
-              <Plus className="w-3.5 h-3.5 text-primary" />
-              Connecting more phones
-            </p>
-            <ol className="text-xs text-muted-foreground space-y-1.5 list-none">
-              {[
-                "On each iPhone: Settings → Messages → Text Message Forwarding → toggle your Mac ON",
-                "For iMessage: just sign in with the same Apple ID on Messages.app on your Mac",
-                "For different Apple IDs / numbers: add a second account in Messages.app → Preferences → Accounts",
-              ].map((step, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-primary/10 text-primary text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    {i + 1}
-                  </span>
-                  {step}
-                </li>
-              ))}
-            </ol>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Download ──────────────────────────────────────── */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-        <SectionLabel>Mac Agent</SectionLabel>
+      {/* Mac Agent download */}
+      <Section title="Mac Agent" icon={<Monitor className="w-4 h-4" />}>
         <p className="text-sm text-muted-foreground leading-relaxed">
           The Mac Agent is a self-contained Node.js server that runs on your Mac.
-          It has zero npm dependencies and controls Messages.app via AppleScript.
+          It controls Messages.app via AppleScript and sends heartbeats to this dashboard every 30 seconds.
         </p>
         <div className="flex flex-wrap gap-3">
-          <a href={`${getApiBase()}/api/mac-agent/download`} download>
-            <Button variant="outline" className="font-medium border-primary/30 text-primary hover:bg-primary/8 hover:border-primary/50">
-              <Download className="w-4 h-4 mr-2" />
-              Download mac-agent-setup.sh
+          <a href={downloadUrl} download>
+            <Button variant="outline" className="font-medium border-primary/30 text-primary hover:bg-primary/8 hover:border-primary/50 gap-2">
+              <Download className="w-4 h-4" />
+              Download dispatch-agent-setup.sh
             </Button>
           </a>
-          <Link href="/setup">
-            <Button variant="ghost" className="text-muted-foreground hover:text-primary font-medium">
-              <Zap className="w-4 h-4 mr-2" />
-              Full setup guide
-            </Button>
-          </Link>
         </div>
-      </div>
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p>After downloading, run:</p>
+          <code className="block bg-secondary/60 rounded px-3 py-2 font-mono text-foreground">
+            chmod +x dispatch-agent-setup.sh && ./dispatch-agent-setup.sh
+          </code>
+        </div>
+      </Section>
+
+      {/* Adding more phones */}
+      <Section title="Connecting More Phones" icon={<Smartphone className="w-4 h-4" />}>
+        <ol className="space-y-3">
+          {[
+            "On each iPhone: Settings → Messages → Text Message Forwarding → toggle your Mac ON",
+            "For iMessage: sign in with the same Apple ID on Messages.app → Settings → iMessage",
+            "For a different Apple ID: Messages.app → Preferences → Accounts → add account",
+          ].map((step, i) => (
+            <li key={i} className="flex items-start gap-3 text-sm text-muted-foreground">
+              <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                {i + 1}
+              </span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </Section>
     </div>
   );
 }

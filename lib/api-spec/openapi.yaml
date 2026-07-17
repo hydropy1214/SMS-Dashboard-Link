@@ -2,8 +2,8 @@ openapi: 3.1.0
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: iMessage Dashboard API
+  version: 0.2.0
+  description: Dispatch — iMessage Dashboard API
 servers:
   - url: /api
     description: Base API path
@@ -12,14 +12,17 @@ tags:
     description: Health operations
   - name: messages
     description: Message sending and history
-  - name: contacts
-    description: Saved contacts
-  - name: system
-    description: System status and diagnostics
   - name: settings
     description: Dashboard configuration
-  - name: mac-agent
-    description: Mac Agent bridge and connectivity
+  - name: agents
+    description: Mac Agent management and heartbeats
+  - name: devices
+    description: Connected messaging devices
+  - name: logs
+    description: System logs
+  - name: dashboard
+    description: Dashboard overview stats
+
 paths:
   /healthz:
     get:
@@ -34,27 +37,65 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  # ── Dashboard ─────────────────────────────────────────────────
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [dashboard]
+      summary: Get live dashboard stats
+      responses:
+        "200":
+          description: Dashboard overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  # ── Messages ──────────────────────────────────────────────────
   /messages:
     get:
       operationId: getMessages
       tags: [messages]
       summary: Get message history
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [sent, failed, pending]
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         "200":
-          description: List of sent messages
+          description: Paginated message list
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Message"
+                $ref: "#/components/schemas/MessagePage"
 
   /messages/send:
     post:
       operationId: sendMessage
       tags: [messages]
       summary: Send a message via Mac Agent
-      description: Proxies the send request to the configured Mac Agent which uses AppleScript to send via Messages.app
       requestBody:
         required: true
         content:
@@ -67,9 +108,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Message"
+                $ref: "#/components/schemas/SendResult"
         "400":
           description: Validation error
           content:
@@ -82,6 +121,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/export:
+    get:
+      operationId: exportMessages
+      tags: [messages]
+      summary: Export message history
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [csv, json]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [sent, failed, pending]
+      responses:
+        "200":
+          description: Export file
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+
+  /messages/all:
+    delete:
+      operationId: deleteAllMessages
+      tags: [messages]
+      summary: Delete all message history
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
 
   /messages/{id}:
     delete:
@@ -108,37 +190,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /contacts:
+  # ── Settings ──────────────────────────────────────────────────
+  /settings:
     get:
-      operationId: getContacts
-      tags: [contacts]
-      summary: List all saved contacts
+      operationId: getSettings
+      tags: [settings]
+      summary: Get all settings
       responses:
         "200":
-          description: List of contacts
+          description: Settings map
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Contact"
-    post:
-      operationId: createContact
-      tags: [contacts]
-      summary: Save a new contact
+                $ref: "#/components/schemas/SettingsMap"
+    patch:
+      operationId: updateSettings
+      tags: [settings]
+      summary: Update one or more settings
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ContactInput"
+              $ref: "#/components/schemas/SettingsMap"
       responses:
-        "201":
-          description: Created contact
+        "200":
+          description: Updated settings
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Contact"
+                $ref: "#/components/schemas/SettingsMap"
         "400":
           description: Validation error
           content:
@@ -146,30 +227,78 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /contacts/{id}:
-    put:
-      operationId: updateContact
-      tags: [contacts]
-      summary: Update a contact
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+  # ── Mac Agents ────────────────────────────────────────────────
+  /agents:
+    get:
+      operationId: getAgents
+      tags: [agents]
+      summary: List all Mac Agents
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MacAgent"
+
+  /agents/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      tags: [agents]
+      summary: Receive heartbeat from Mac Agent
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ContactUpdate"
+              $ref: "#/components/schemas/HeartbeatInput"
       responses:
         "200":
-          description: Updated contact
+          description: Acknowledged
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Contact"
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /agents/status:
+    get:
+      operationId: getMacAgentStatus
+      tags: [agents]
+      summary: Get primary Mac Agent connection status (legacy compat)
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MacAgentStatus"
+
+  /agents/{agentId}:
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Get a specific Mac Agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Mac Agent detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MacAgent"
         "404":
           description: Not found
           content:
@@ -177,15 +306,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
     delete:
-      operationId: deleteContact
-      tags: [contacts]
-      summary: Delete a contact
+      operationId: deleteAgent
+      tags: [agents]
+      summary: Remove a Mac Agent record
       parameters:
-        - name: id
+        - name: agentId
           in: path
           required: true
           schema:
-            type: integer
+            type: string
       responses:
         "200":
           description: Deleted
@@ -193,83 +322,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
-  /settings:
-    get:
-      operationId: getSettings
-      tags: [settings]
-      summary: Get current dashboard settings
-      responses:
-        "200":
-          description: Current settings
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Settings"
-    post:
-      operationId: updateSettings
-      tags: [settings]
-      summary: Update dashboard settings
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SettingsInput"
-      responses:
-        "200":
-          description: Updated settings
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Settings"
-
-  /mac-agent/status:
-    get:
-      operationId: getMacAgentStatus
-      tags: [mac-agent]
-      summary: Check Mac Agent connectivity
-      description: Pings the configured Mac Agent URL to check if it is reachable
-      responses:
-        "200":
-          description: Mac Agent status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MacAgentStatus"
-
-  /mac-agent/download:
+  /agents/download:
     get:
       operationId: downloadMacAgent
-      tags: [mac-agent]
-      summary: Download the Mac Agent setup script
-      description: Returns a shell script that installs and starts the Mac Agent on macOS
+      tags: [agents]
+      summary: Download the Mac Agent installer script
       responses:
         "200":
-          description: Shell script content
+          description: Shell installer script
           content:
             text/plain:
               schema:
                 type: string
 
-  /system/status:
+  # ── Devices ───────────────────────────────────────────────────
+  /devices:
     get:
-      operationId: getSystemStatus
-      tags: [system]
-      summary: Check system status on the current host
+      operationId: getDevices
+      tags: [devices]
+      summary: List all detected messaging devices
       responses:
         "200":
-          description: System status
+          description: List of devices
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SystemStatus"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+
+  # ── Logs ──────────────────────────────────────────────────────
+  /logs:
+    get:
+      operationId: getLogs
+      tags: [logs]
+      summary: Get system logs
+      parameters:
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [info, warn, error, debug]
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogPage"
 
 components:
   schemas:
@@ -278,9 +397,63 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+          enum: [ok]
+        timestamp:
+          type: string
+          format: date-time
+      required: [status, timestamp]
 
+    # ── Dashboard ───────────────────────────────────────────────
+    DashboardStats:
+      type: object
+      properties:
+        agentStatus:
+          type: string
+          enum: [online, offline, unknown]
+        agentConnected:
+          type: boolean
+        messagesReady:
+          type: boolean
+        appleScriptReady:
+          type: boolean
+        connectedAccounts:
+          type: integer
+        connectedDevices:
+          type: integer
+        sentToday:
+          type: integer
+        failedToday:
+          type: integer
+        pendingMessages:
+          type: integer
+        totalMessages:
+          type: integer
+        avgSendTimeMs:
+          type: ["integer", "null"]
+        lastHeartbeat:
+          type: ["string", "null"]
+          format: date-time
+        activeAgents:
+          type: integer
+        recentMessages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+      required:
+        - agentStatus
+        - agentConnected
+        - messagesReady
+        - appleScriptReady
+        - connectedAccounts
+        - connectedDevices
+        - sentToday
+        - failedToday
+        - pendingMessages
+        - totalMessages
+        - activeAgents
+        - recentMessages
+
+    # ── Messages ────────────────────────────────────────────────
     Message:
       type: object
       properties:
@@ -295,14 +468,33 @@ components:
           enum: [sent, failed, pending]
         error:
           type: ["string", "null"]
+        agentId:
+          type: ["string", "null"]
+        duration:
+          type: ["integer", "null"]
+        retryCount:
+          type: integer
         sentAt:
           type: string
-      required:
-        - id
-        - phoneNumber
-        - content
-        - status
-        - sentAt
+          format: date-time
+      required: [id, phoneNumber, content, status, retryCount, sentAt]
+
+    MessagePage:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalPages:
+          type: integer
+      required: [messages, total, page, pageSize, totalPages]
 
     MessageInput:
       type: object
@@ -315,68 +507,143 @@ components:
         content:
           type: string
           minLength: 1
-      required:
-        - phoneNumbers
-        - content
+      required: [phoneNumbers, content]
 
-    Contact:
+    SendResult:
+      type: object
+      properties:
+        sent:
+          type: integer
+        failed:
+          type: integer
+        total:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+      required: [sent, failed, total, results]
+
+    # ── Settings ────────────────────────────────────────────────
+    SettingsMap:
+      type: object
+      additionalProperties:
+        type: ["string", "null"]
+
+    # ── Mac Agents ──────────────────────────────────────────────
+    MacAgent:
       type: object
       properties:
         id:
           type: integer
-        name:
+        agentId:
           type: string
-        phoneNumber:
+        hostname:
           type: string
+        os:
+          type: ["string", "null"]
+        macosVersion:
+          type: ["string", "null"]
+        nodeVersion:
+          type: ["string", "null"]
+        agentVersion:
+          type: ["string", "null"]
+        messagesAppRunning:
+          type: ["boolean", "null"]
+        messagesAppAvailable:
+          type: ["boolean", "null"]
+        appleScriptAvailable:
+          type: ["boolean", "null"]
+        connectedAccounts:
+          type: array
+          items:
+            type: string
+          nullable: true
+        connectedDevices:
+          type: array
+          items:
+            type: string
+          nullable: true
+        latencyMs:
+          type: ["integer", "null"]
+        cpuUsage:
+          type: ["number", "null"]
+        memoryUsage:
+          type: ["number", "null"]
+        queueSize:
+          type: integer
+        lastHeartbeatAt:
+          type: ["string", "null"]
+          format: date-time
+        lastActivityAt:
+          type: ["string", "null"]
+          format: date-time
+        status:
+          type: string
+          enum: [online, offline]
+        macAgentUrl:
+          type: ["string", "null"]
         createdAt:
           type: string
-      required:
-        - id
-        - name
-        - phoneNumber
-        - createdAt
-
-    ContactInput:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-        phoneNumber:
-          type: string
-          minLength: 1
-      required:
-        - name
-        - phoneNumber
-
-    ContactUpdate:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-        phoneNumber:
-          type: string
-          minLength: 1
-
-    Settings:
-      type: object
-      properties:
-        macAgentUrl:
-          type: ["string", "null"]
+          format: date-time
         updatedAt:
           type: string
-      required:
-        - macAgentUrl
-        - updatedAt
+          format: date-time
+      required: [id, agentId, hostname, status, queueSize, createdAt, updatedAt]
 
-    SettingsInput:
+    HeartbeatInput:
       type: object
       properties:
-        macAgentUrl:
+        agentId:
+          type: string
+        hostname:
+          type: string
+        os:
+          type: string
+        macosVersion:
+          type: ["string", "null"]
+        nodeVersion:
+          type: string
+        agentVersion:
+          type: string
+        messagesAppRunning:
+          type: boolean
+        messagesAppAvailable:
+          type: boolean
+        appleScriptAvailable:
+          type: boolean
+        connectedAccounts:
+          type: array
+          items:
+            type: string
+        connectedDevices:
+          type: array
+          items:
+            type: string
+        latencyMs:
+          type: ["integer", "null"]
+        cpuUsage:
+          type: number
+        memoryUsage:
+          type: number
+        queueSize:
+          type: integer
+        lastActivityAt:
           type: ["string", "null"]
       required:
-        - macAgentUrl
+        - agentId
+        - hostname
+        - os
+        - nodeVersion
+        - agentVersion
+        - messagesAppRunning
+        - messagesAppAvailable
+        - appleScriptAvailable
+        - connectedAccounts
+        - connectedDevices
+        - cpuUsage
+        - memoryUsage
+        - queueSize
 
     MacAgentStatus:
       type: object
@@ -397,44 +664,100 @@ components:
           type: ["string", "null"]
         latencyMs:
           type: ["integer", "null"]
-      required:
-        - connected
-        - url
-
-    SystemStatus:
-      type: object
-      properties:
-        platform:
-          type: string
-        isMac:
-          type: boolean
-        messagesAppAvailable:
-          type: boolean
-        appleScriptAvailable:
-          type: boolean
-        recommendations:
+        hostname:
+          type: ["string", "null"]
+        agentVersion:
+          type: ["string", "null"]
+        connectedAccounts:
           type: array
           items:
             type: string
-      required:
-        - platform
-        - isMac
-        - messagesAppAvailable
-        - appleScriptAvailable
-        - recommendations
+          nullable: true
+        connectedDevices:
+          type: array
+          items:
+            type: string
+          nullable: true
+        lastHeartbeat:
+          type: ["string", "null"]
+          format: date-time
+      required: [connected]
 
+    # ── Devices ─────────────────────────────────────────────────
+    Device:
+      type: object
+      properties:
+        id:
+          type: integer
+        agentId:
+          type: string
+        displayName:
+          type: string
+        service:
+          type: string
+          enum: [iMessage, SMS]
+        accountId:
+          type: ["string", "null"]
+        available:
+          type: boolean
+        lastUsedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, agentId, displayName, service, createdAt]
+
+    # ── Logs ────────────────────────────────────────────────────
+    LogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        level:
+          type: string
+          enum: [info, warn, error, debug]
+        category:
+          type: string
+        message:
+          type: string
+        data:
+          type: ["string", "null"]
+        agentId:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, level, category, message, createdAt]
+
+    LogPage:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogEntry"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalPages:
+          type: integer
+      required: [logs, total, page, pageSize, totalPages]
+
+    # ── Shared ──────────────────────────────────────────────────
     SuccessResponse:
       type: object
       properties:
         success:
           type: boolean
-      required:
-        - success
+      required: [success]
 
     ErrorResponse:
       type: object
       properties:
         error:
           type: string
-      required:
-        - error
+      required: [error]

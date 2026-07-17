@@ -48,20 +48,54 @@ Recipients' phones
 
 The API server proxies message-send calls to the Mac Agent via a secure tunnel (Cloudflare or ngrok). The tunnel URL is saved in the `settings` table under key `macAgentUrl`.
 
+Mac Agents send heartbeats every 30 seconds to `/api/agents/heartbeat` so the dashboard always shows live status without requiring a manual probe.
+
 ---
 
 ## Where things live
 
 | Path | Purpose |
 |---|---|
-| `artifacts/api-server/src/routes/` | Express route handlers |
-| `artifacts/api-server/src/routes/mac-agent.ts` | Mac Agent proxy + downloadable installer script |
-| `artifacts/imessage-dashboard/src/pages/` | Frontend pages (Compose, Activity, Setup, Settings) |
-| `artifacts/imessage-dashboard/src/components/layout/Shell.tsx` | Sidebar, nav, connection status |
+| `artifacts/api-server/src/routes/agents.ts` | Mac Agent heartbeat, status, list, download |
+| `artifacts/api-server/src/routes/messages.ts` | Send, history, export, delete |
+| `artifacts/api-server/src/routes/dashboard.ts` | Live overview stats |
+| `artifacts/api-server/src/routes/devices.ts` | Connected messaging devices |
+| `artifacts/api-server/src/routes/logs.ts` | System log viewer |
+| `artifacts/api-server/src/routes/settings.ts` | Settings CRUD |
+| `artifacts/api-server/src/lib/system-logger.ts` | Structured DB-backed logging helper |
+| `artifacts/imessage-dashboard/src/pages/Dashboard.tsx` | Live overview |
+| `artifacts/imessage-dashboard/src/pages/Compose.tsx` | Bulk send with CSV/TXT upload |
+| `artifacts/imessage-dashboard/src/pages/Activity.tsx` | Message history, search, filter, export |
+| `artifacts/imessage-dashboard/src/pages/ConnectedMacs.tsx` | Per-agent cards with CPU/memory |
+| `artifacts/imessage-dashboard/src/pages/Devices.tsx` | iMessage accounts + SMS devices |
+| `artifacts/imessage-dashboard/src/pages/Logs.tsx` | System logs viewer |
+| `artifacts/imessage-dashboard/src/pages/Settings.tsx` | Agent URL, connection status, download |
 | `lib/api-spec/openapi.yaml` | OpenAPI spec — source of truth for codegen |
 | `lib/api-client-react/src/generated/` | Generated React Query hooks (do not edit manually) |
 | `lib/api-zod/src/generated/` | Generated Zod schemas (do not edit manually) |
 | `lib/db/src/schema/` | Drizzle ORM table definitions |
+
+---
+
+## Database tables
+
+| Table | Purpose |
+|---|---|
+| `messages` | Send history with status, agent, duration, retry count |
+| `settings` | Key-value config (macAgentUrl, etc.) |
+| `mac_agents` | Connected Mac Agents with heartbeat data |
+| `devices` | Detected messaging accounts and SMS devices |
+| `system_logs` | Structured event log for all important operations |
+
+---
+
+## Mac Agent heartbeat flow
+
+1. Mac Agent starts → reads/generates `config.json` with agentId
+2. Every 30 seconds: POST `/api/agents/heartbeat` with full system status
+3. Backend upserts `mac_agents` row, writes `system_logs` entry
+4. Dashboard queries `/api/agents/status` (reads from DB, falls back to live probe)
+5. Agent is considered "offline" if no heartbeat for 90 seconds
 
 ---
 
@@ -79,11 +113,12 @@ The API server proxies message-send calls to the Mac Agent via a secure tunnel (
 
 ## Architecture decisions
 
-- **Proxy pattern**: the Replit API server proxies sends to the Mac Agent rather than having the browser call it directly, avoiding HTTPS→HTTP mixed-content issues and hiding the tunnel URL from clients.
+- **Heartbeat-first**: Agents push status every 30s; status endpoint reads from DB rather than probing live. This makes the sidebar always snappy and avoids latency spikes.
+- **Proxy pattern**: The Replit API server proxies sends to the Mac Agent rather than having the browser call it directly, avoiding HTTPS→HTTP mixed-content issues and hiding the tunnel URL from clients.
 - **Settings in DB**: `macAgentUrl` lives in the `settings` table so it persists across deploys without needing a separate secrets store.
-- **Mac Agent has zero deps**: the installer script embeds the full `server.js` source inline so users run one script with no npm install step.
-- **Accounts endpoint**: `/api/mac-agent/accounts` proxies to the Mac Agent's `/accounts` endpoint which uses AppleScript to list all Messages.app accounts — this drives the "Connected Devices" UI in Settings.
-- **OpenAPI is the contract**: all route shape changes must go through `lib/api-spec/openapi.yaml` first, then `codegen` regenerates both client hooks and server Zod schemas.
+- **Mac Agent has zero deps**: The installer script embeds the full `server.js` source inline so users run one script with no npm install step.
+- **OpenAPI is the contract**: All route shape changes must go through `lib/api-spec/openapi.yaml` first, then `codegen` regenerates both client hooks and server Zod schemas.
+- **System logger**: All important events (heartbeat, send, error) are recorded to `system_logs` via `syslog()` so the Logs page has a persistent audit trail.
 
 ---
 

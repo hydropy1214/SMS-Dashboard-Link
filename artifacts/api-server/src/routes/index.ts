@@ -1,18 +1,20 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import messagesRouter from "./messages";
-import contactsRouter from "./contacts";
-import systemRouter from "./system";
+import agentsRouter from "./agents";
+import devicesRouter from "./devices";
+import logsRouter from "./logs";
 import settingsRouter from "./settings";
-import macAgentRouter from "./mac-agent";
+import dashboardRouter from "./dashboard";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(messagesRouter);
-router.use(contactsRouter);
-router.use(systemRouter);
+router.use(agentsRouter);
+router.use(devicesRouter);
+router.use(logsRouter);
 router.use(settingsRouter);
-router.use(macAgentRouter);
+router.use(dashboardRouter);
 
 export default router;
