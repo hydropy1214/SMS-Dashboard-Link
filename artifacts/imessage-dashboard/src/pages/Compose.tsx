@@ -54,7 +54,20 @@ function agentIsOnline(lastHeartbeatAt?: string | null) {
   return Date.now() - new Date(lastHeartbeatAt).getTime() < OFFLINE_MS;
 }
 
-type SenderMode = "all" | "specific";
+type SenderMode = "all" | "devices";
+
+// A device key uniquely identifies an iPhone/account across all agents.
+// Format: `${agentId}::${fromPhone}` — fromPhone is the Messages.app service name.
+type DeviceKey = string;
+
+interface DeviceEntry {
+  key: DeviceKey;
+  agentId: string;
+  agentHostname: string;
+  fromPhone: string;
+  displayName: string;
+  connectionType: "usb" | "wifi" | "imessage";
+}
 
 /* ─── SenderRow sub-component ────────────────────────────── */
 
@@ -102,8 +115,8 @@ export default function Compose() {
   const [showInvalid, setShowInvalid]   = useState(false);
   const [sendProgress, setSendProgress] = useState<SendProgress | null>(null);
   const [senderMode, setSenderMode]     = useState<SenderMode>("all");
-  const [selectedAgentId, setSelectedAgentId]     = useState<string | null>(null);
-  const [selectedFromPhone, setSelectedFromPhone] = useState<string | null>(null);
+  const [selectedDeviceKeys, setSelectedDeviceKeys] = useState<Set<DeviceKey>>(new Set());
+  const [isSending, setIsSending]       = useState(false);
   const [guideOpen, setGuideOpen]       = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -120,12 +133,33 @@ export default function Compose() {
     () => allAgents.filter(a => agentIsOnline(a.lastHeartbeatAt)),
     [allAgents],
   );
-  const selectedAgent = onlineAgents.find(a => a.agentId === selectedAgentId) ?? null;
+
+  // Flat list of all sendable devices (USB iPhones, Wi-Fi iPhones, iMessage accounts)
+  // across all online agents. These are the correct Messages.app service names.
+  const allDevices = useMemo<DeviceEntry[]>(() => {
+    const list: DeviceEntry[] = [];
+    for (const agent of onlineAgents) {
+      const usb:  string[] = (agent as any).usbDevices ?? [];
+      const wifi: string[] = (agent as any).connectedDevices ?? [];
+      const acct: string[] = agent.connectedAccounts ?? [];
+      for (const dev of usb) {
+        list.push({ key: `${agent.agentId}::${dev}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "usb" });
+      }
+      for (const dev of wifi) {
+        list.push({ key: `${agent.agentId}::${dev}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "wifi" });
+      }
+      for (const a of acct) {
+        list.push({ key: `${agent.agentId}::${a}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: a, displayName: a, connectionType: "imessage" });
+      }
+    }
+    return list;
+  }, [onlineAgents]);
+
   const { unique: recipients, dupes, invalid } = useMemo(() => parseNumbers(rawNumbers), [rawNumbers]);
 
   const isConnected = macStatus?.connected === true;
   const macKnown    = macStatus !== undefined;
-  const canSend     = recipients.length > 0 && message.trim().length > 0 && !sendMessage.isPending;
+  const canSend     = recipients.length > 0 && message.trim().length > 0 && !isSending;
   const segments    = estimateSmsSegments(message.length);
 
   /* ── file upload ─────────────────────────────────────── */
@@ -155,39 +189,96 @@ export default function Compose() {
     }
   }, [handleFile]);
 
+  /* ── helpers ─────────────────────────────────────────── */
+  function splitRecipients(all: string[], count: number): string[][] {
+    if (count <= 1) return [all];
+    const chunks: string[][] = Array.from({ length: count }, () => []);
+    all.forEach((r, i) => chunks[i % count].push(r));
+    return chunks.filter(c => c.length > 0);
+  }
+
   /* ── send ────────────────────────────────────────────── */
-  const handleSend = () => {
-    if (!canSend) return;
-    setSendProgress({ sent: 0, failed: 0, total: recipients.length });
+  const handleSend = async () => {
+    if (!canSend || isSending) return;
+    setIsSending(true);
 
-    const sendData: Record<string, unknown> = { phoneNumbers: recipients, content: message };
-    if (senderMode === "specific" && selectedAgent) {
-      sendData.agentId = selectedAgent.agentId;
-      if (selectedFromPhone) sendData.fromPhone = selectedFromPhone;
-    }
+    const activeDevices = senderMode === "devices" && selectedDeviceKeys.size > 0
+      ? allDevices.filter(d => selectedDeviceKeys.has(d.key))
+      : [];
 
-    sendMessage.mutate(
-      { data: sendData as any },
-      {
-        onSuccess: (data: any) => {
-          const { sent = 0, failed = 0, total = 0 } = data ?? {};
-          setSendProgress({ sent, failed, total });
-          setTimeout(() => {
-            setSendProgress(null);
-            if (failed === 0)      toast.success(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
-            else if (sent === 0)   toast.error(`Failed for all ${failed} recipients`);
-            else                   toast.warning(`Sent: ${sent} · Failed: ${failed}`);
-            setRawNumbers("");
-            setMessage("");
-            queryClient.invalidateQueries({ queryKey: getGetMessagesQueryKey() });
-          }, 1200);
-        },
-        onError: (err: any) => {
-          setSendProgress(null);
-          toast.error("Send failed: " + (err?.message ?? "Unknown error"));
-        },
+    if (activeDevices.length <= 1) {
+      // Single-device or "all" mode — one API call, server picks agent
+      setSendProgress({ sent: 0, failed: 0, total: recipients.length });
+      const sendData: Record<string, unknown> = { phoneNumbers: recipients, content: message };
+      if (activeDevices.length === 1) {
+        sendData.agentId = activeDevices[0].agentId;
+        sendData.fromPhone = activeDevices[0].fromPhone;
       }
-    );
+      sendMessage.mutate(
+        { data: sendData as any },
+        {
+          onSuccess: (data: any) => {
+            const { sent = 0, failed = 0, total = 0 } = data ?? {};
+            setSendProgress({ sent, failed, total });
+            setTimeout(() => {
+              setSendProgress(null);
+              setIsSending(false);
+              if (failed === 0)    toast.success(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
+              else if (sent === 0) toast.error(`Failed for all ${failed} recipients`);
+              else                 toast.warning(`Sent: ${sent} · Failed: ${failed}`);
+              setRawNumbers("");
+              setMessage("");
+              queryClient.invalidateQueries({ queryKey: getGetMessagesQueryKey() });
+            }, 1200);
+          },
+          onError: (err: any) => {
+            setSendProgress(null);
+            setIsSending(false);
+            toast.error("Send failed: " + (err?.message ?? "Unknown error"));
+          },
+        }
+      );
+    } else {
+      // Multi-device mode — split recipients evenly across selected iPhones, send in parallel
+      const chunks = splitRecipients(recipients, activeDevices.length);
+      setSendProgress({ sent: 0, failed: 0, total: recipients.length });
+
+      try {
+        const results = await Promise.all(
+          activeDevices.slice(0, chunks.length).map((device, i) =>
+            sendMessage.mutateAsync({
+              data: {
+                phoneNumbers: chunks[i],
+                content: message,
+                agentId: device.agentId,
+                fromPhone: device.fromPhone,
+              } as any,
+            })
+          )
+        );
+
+        const totals = (results as any[]).reduce(
+          (acc, r) => ({ sent: acc.sent + (r?.sent ?? 0), failed: acc.failed + (r?.failed ?? 0), total: acc.total + (r?.total ?? 0) }),
+          { sent: 0, failed: 0, total: 0 }
+        );
+        setSendProgress(totals);
+
+        setTimeout(() => {
+          setSendProgress(null);
+          setIsSending(false);
+          if (totals.failed === 0)    toast.success(`Sent to ${totals.sent} recipient${totals.sent !== 1 ? "s" : ""} via ${activeDevices.length} iPhones`);
+          else if (totals.sent === 0) toast.error(`Failed for all ${totals.failed} recipients`);
+          else                         toast.warning(`Sent: ${totals.sent} · Failed: ${totals.failed}`);
+          setRawNumbers("");
+          setMessage("");
+          queryClient.invalidateQueries({ queryKey: getGetMessagesQueryKey() });
+        }, 1200);
+      } catch (err: any) {
+        setSendProgress(null);
+        setIsSending(false);
+        toast.error("Send failed: " + (err?.message ?? "Unknown error"));
+      }
+    }
   };
 
   const removeRecipient = (idx: number) => {
@@ -230,12 +321,12 @@ export default function Compose() {
             </div>
             {/* Mode toggle */}
             <div className="ml-auto flex items-center gap-0.5 p-0.5 rounded-lg bg-secondary border border-border shrink-0">
-              {(["all", "specific"] as SenderMode[]).map(m => (
+              {(["all", "devices"] as SenderMode[]).map(m => (
                 <button
                   key={m}
                   onClick={() => {
                     setSenderMode(m);
-                    if (m === "all") { setSelectedAgentId(null); setSelectedFromPhone(null); }
+                    if (m === "all") setSelectedDeviceKeys(new Set());
                   }}
                   className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                     senderMode === m
@@ -243,7 +334,7 @@ export default function Compose() {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {m === "all" ? "All online Macs" : "Specific device"}
+                  {m === "all" ? "Any available" : "Choose iPhones"}
                 </button>
               ))}
             </div>
@@ -253,10 +344,10 @@ export default function Compose() {
           <div className="px-5 py-4">
 
             {senderMode === "all" ? (
-              /* ── All Macs view ─────────────────────── */
+              /* ── Any-available view ────────────────── */
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Dispatch picks the least-loaded online Mac automatically. All {onlineAgents.length} Mac{onlineAgents.length !== 1 ? "s" : ""} are eligible.
+                  Dispatch picks the least-loaded online Mac automatically. All {onlineAgents.length} Mac{onlineAgents.length !== 1 ? "s" : ""} and {allDevices.length} device{allDevices.length !== 1 ? "s" : ""} are eligible.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {onlineAgents.map(agent => {
@@ -288,160 +379,108 @@ export default function Compose() {
                 </div>
               </div>
             ) : (
-              /* ── Specific device view ──────────────── */
-              <div className="space-y-5">
+              /* ── Choose-iPhones view ───────────────── */
+              <div className="space-y-3">
 
-                {/* Step 1 — pick Mac */}
-                <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Step 1 · Choose Mac</p>
-                  <div className="grid gap-1.5">
-                    {onlineAgents.map(agent => {
-                      const usb:  string[] = (agent as any).usbDevices ?? [];
-                      const wifi: string[] = (agent as any).connectedDevices ?? [];
-                      const acct: string[] = agent.connectedAccounts ?? [];
-                      const sel  = selectedAgent?.agentId === agent.agentId;
-                      return (
-                        <button
-                          key={agent.agentId}
-                          onClick={() => { setSelectedAgentId(agent.agentId); setSelectedFromPhone(null); }}
-                          className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-all w-full ${
-                            sel ? "border-primary/40 bg-primary/5" : "border-border hover:border-primary/20 hover:bg-secondary/20"
-                          }`}
-                        >
-                          <Monitor className={`w-4 h-4 shrink-0 ${sel ? "text-primary" : "text-muted-foreground"}`} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-foreground truncate">{agent.hostname}</p>
-                            <div className="flex flex-wrap items-center gap-3 mt-0.5">
-                              {usb.length > 0 && (
-                                <span className="text-[10px] text-violet-400 flex items-center gap-1">
-                                  <Cable className="w-2.5 h-2.5" />{usb.length} USB iPhone{usb.length !== 1 ? "s" : ""}
-                                </span>
-                              )}
-                              {wifi.length > 0 && (
-                                <span className="text-[10px] text-blue-400 flex items-center gap-1">
-                                  <Wifi className="w-2.5 h-2.5" />{wifi.length} Wi-Fi iPhone{wifi.length !== 1 ? "s" : ""}
-                                </span>
-                              )}
-                              {acct.length > 0 && (
-                                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                  <MessageSquare className="w-2.5 h-2.5" />{acct.length} iMessage account{acct.length !== 1 ? "s" : ""}
-                                </span>
-                              )}
-                              {usb.length === 0 && wifi.length === 0 && acct.length === 0 && (
-                                <span className="text-[10px] text-muted-foreground/60">No devices detected</span>
-                              )}
-                            </div>
-                          </div>
-                          {sel && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
-                        </button>
-                      );
-                    })}
+                {allDevices.length === 0 ? (
+                  <div className="flex items-start gap-3 px-4 py-3.5 rounded-lg border border-dashed border-border bg-secondary/10">
+                    <AlertCircle className="w-4 h-4 text-muted-foreground/50 shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-1">
+                      <p className="text-xs font-semibold text-foreground">No iPhones detected</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Plug in via USB and enable Text Message Forwarding, or enable Wi-Fi Text Message Forwarding on your iPhone.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setGuideOpen(true)}
+                      className="shrink-0 text-[10px] px-2.5 py-1 rounded-md border border-border hover:border-primary/40 hover:text-primary text-muted-foreground transition-colors font-medium"
+                    >
+                      Setup guide
+                    </button>
                   </div>
-                </div>
-
-                {/* Step 2 — pick sender (shown once a Mac is selected) */}
-                <AnimatePresence>
-                  {selectedAgent && (() => {
-                    const usb:  string[] = (selectedAgent as any).usbDevices ?? [];
-                    const wifi: string[] = (selectedAgent as any).connectedDevices ?? [];
-                    const acct: string[] = selectedAgent.connectedAccounts ?? [];
-                    const hasSenders = usb.length > 0 || wifi.length > 0 || acct.length > 0;
-
-                    return (
-                      <motion.div
-                        key="step2"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="overflow-hidden"
+                ) : (
+                  <>
+                    {/* Select-all row */}
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[10px] text-muted-foreground">
+                        Select which iPhones to send from. Recipients split evenly when multiple are chosen.
+                      </p>
+                      <button
+                        onClick={() => {
+                          if (selectedDeviceKeys.size === allDevices.length) {
+                            setSelectedDeviceKeys(new Set());
+                          } else {
+                            setSelectedDeviceKeys(new Set(allDevices.map(d => d.key)));
+                          }
+                        }}
+                        className="shrink-0 text-[10px] font-medium text-primary hover:underline"
                       >
-                        <div className="pt-4 border-t border-border space-y-2.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                              Step 2 · Send through <span className="normal-case font-normal opacity-60">(optional — defaults to auto)</span>
-                            </p>
-                            <button
-                              onClick={() => setGuideOpen(true)}
-                              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary transition-colors"
-                            >
-                              <HelpCircle className="w-3 h-3" />
-                              How to connect iPhones
-                            </button>
-                          </div>
+                        {selectedDeviceKeys.size === allDevices.length ? "Deselect all" : "Select all"}
+                      </button>
+                    </div>
 
-                          {!hasSenders ? (
-                            <div className="flex items-start gap-3 px-4 py-3.5 rounded-lg border border-dashed border-border bg-secondary/10">
-                              <AlertCircle className="w-4 h-4 text-muted-foreground/50 shrink-0 mt-0.5" />
-                              <div className="flex-1 space-y-1">
-                                <p className="text-xs font-semibold text-foreground">No iPhones detected on {selectedAgent.hostname}</p>
-                                <p className="text-[11px] text-muted-foreground">Plug in via USB cable, or enable Wi-Fi Text Message Forwarding on your iPhone.</p>
-                              </div>
-                              <button
-                                onClick={() => setGuideOpen(true)}
-                                className="shrink-0 text-[10px] px-2.5 py-1 rounded-md border border-border hover:border-primary/40 hover:text-primary text-muted-foreground transition-colors font-medium"
-                              >
-                                Setup guide
-                              </button>
+                    {/* Device list — flat across all agents */}
+                    <div className="grid gap-1.5">
+                      {allDevices.map(device => {
+                        const sel = selectedDeviceKeys.has(device.key);
+                        const typeColors = {
+                          usb:      { icon: <Cable className={`w-4 h-4 ${sel ? "text-violet-400" : "text-muted-foreground"}`} />, badge: "USB",     badgeCls: "bg-violet-500/10 text-violet-400 border-violet-500/20", accentCls: "border-violet-500/40 bg-violet-500/5" },
+                          wifi:     { icon: <Wifi  className={`w-4 h-4 ${sel ? "text-blue-400"   : "text-muted-foreground"}`} />, badge: "Wi-Fi",   badgeCls: "bg-blue-500/10 text-blue-400 border-blue-500/20",       accentCls: "border-blue-500/40 bg-blue-500/5"   },
+                          imessage: { icon: <MessageSquare className={`w-4 h-4 ${sel ? "text-primary" : "text-muted-foreground"}`} />, badge: "iMessage", badgeCls: "bg-primary/10 text-primary border-primary/20",          accentCls: "border-primary/40 bg-primary/5"     },
+                        }[device.connectionType];
+                        const sublabels = { usb: "USB cable · SMS via this iPhone", wifi: "Wi-Fi forwarding · SMS via this iPhone", imessage: "iMessage account" };
+                        return (
+                          <button
+                            key={device.key}
+                            onClick={() => {
+                              const next = new Set(selectedDeviceKeys);
+                              if (next.has(device.key)) next.delete(device.key); else next.add(device.key);
+                              setSelectedDeviceKeys(next);
+                            }}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-all w-full ${
+                              sel ? typeColors.accentCls : "border-border hover:border-primary/20 hover:bg-secondary/20"
+                            }`}
+                          >
+                            {/* Checkbox */}
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+                              sel ? "bg-primary border-primary" : "border-muted-foreground/40"
+                            }`}>
+                              {sel && <svg className="w-2.5 h-2.5 text-primary-foreground" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                             </div>
-                          ) : (
-                            <div className="grid gap-1.5">
-                              {/* Auto */}
-                              <SenderRow
-                                icon={<Zap className={`w-4 h-4 ${!selectedFromPhone ? "text-primary" : "text-muted-foreground"}`} />}
-                                label="Auto"
-                                sublabel="Messages.app picks — tries iMessage → SMS → fallback"
-                                accentClass="border-primary/40 bg-primary/5"
-                                selected={!selectedFromPhone}
-                                onClick={() => setSelectedFromPhone(null)}
-                              />
-                              {/* USB iPhones */}
-                              {usb.map(dev => (
-                                <SenderRow
-                                  key={`usb-${dev}`}
-                                  icon={<Cable className={`w-4 h-4 ${selectedFromPhone === dev ? "text-violet-400" : "text-muted-foreground"}`} />}
-                                  label={dev}
-                                  sublabel="USB cable · SMS & iMessage via this iPhone"
-                                  badge="USB"
-                                  badgeClass="bg-violet-500/10 text-violet-400 border-violet-500/20"
-                                  accentClass="border-violet-500/40 bg-violet-500/5"
-                                  selected={selectedFromPhone === dev}
-                                  onClick={() => setSelectedFromPhone(dev)}
-                                />
-                              ))}
-                              {/* Wi-Fi iPhones */}
-                              {wifi.map(dev => (
-                                <SenderRow
-                                  key={`wifi-${dev}`}
-                                  icon={<Wifi className={`w-4 h-4 ${selectedFromPhone === dev ? "text-blue-400" : "text-muted-foreground"}`} />}
-                                  label={dev}
-                                  sublabel="Wi-Fi forwarding · SMS routed via this iPhone's cellular"
-                                  badge="Wi-Fi"
-                                  badgeClass="bg-blue-500/10 text-blue-400 border-blue-500/20"
-                                  accentClass="border-blue-500/40 bg-blue-500/5"
-                                  selected={selectedFromPhone === dev}
-                                  onClick={() => setSelectedFromPhone(dev)}
-                                />
-                              ))}
-                              {/* iMessage accounts */}
-                              {acct.map(a => (
-                                <SenderRow
-                                  key={`acct-${a}`}
-                                  icon={<MessageSquare className={`w-4 h-4 ${selectedFromPhone === a ? "text-primary" : "text-muted-foreground"}`} />}
-                                  label={a}
-                                  sublabel="iMessage account"
-                                  accentClass="border-primary/40 bg-primary/5"
-                                  selected={selectedFromPhone === a}
-                                  onClick={() => setSelectedFromPhone(a)}
-                                />
-                              ))}
+                            <div className="shrink-0">{typeColors.icon}</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-foreground truncate">{device.displayName}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {sublabels[device.connectionType]}
+                                {onlineAgents.length > 1 && <span className="opacity-60"> · {device.agentHostname}</span>}
+                              </p>
                             </div>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })()}
-                </AnimatePresence>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border shrink-0 ${typeColors.badgeCls}`}>
+                              {typeColors.badge}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
 
+                    {/* Distribution preview */}
+                    {selectedDeviceKeys.size > 1 && recipients.length > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-[11px] text-primary">
+                        <Zap className="w-3 h-3 shrink-0" />
+                        {recipients.length} recipient{recipients.length !== 1 ? "s" : ""} split evenly across {selectedDeviceKeys.size} iPhones (~{Math.ceil(recipients.length / selectedDeviceKeys.size)} each)
+                      </div>
+                    )}
+
+                    {/* Setup guide link */}
+                    <button
+                      onClick={() => setGuideOpen(true)}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      <HelpCircle className="w-3 h-3" />
+                      How to connect iPhones via USB or Wi-Fi
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -633,7 +672,7 @@ export default function Compose() {
         {/* Footer */}
         <div className="px-6 py-4 bg-secondary/20 border-t border-border flex items-center justify-between gap-4">
           <div className="text-sm text-muted-foreground min-w-0">
-            {sendMessage.isPending ? (
+            {isSending ? (
               <span className="flex items-center gap-2 text-primary">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                 Sending to {recipients.length} recipient{recipients.length !== 1 ? "s" : ""}…
@@ -643,9 +682,9 @@ export default function Compose() {
                 <Zap className="w-3.5 h-3.5 text-primary shrink-0" />
                 <span className="truncate">
                   Ready — {recipients.length} recipient{recipients.length !== 1 ? "s" : ""}
-                  {senderMode === "specific" && selectedAgent && (
+                  {senderMode === "devices" && selectedDeviceKeys.size > 0 && (
                     <span className="text-muted-foreground/60">
-                      {" "}· via {selectedAgent.hostname}{selectedFromPhone ? ` (${selectedFromPhone})` : " (auto)"}
+                      {" "}· via {selectedDeviceKeys.size} iPhone{selectedDeviceKeys.size !== 1 ? "s" : ""}
                     </span>
                   )}
                 </span>
@@ -660,7 +699,7 @@ export default function Compose() {
             size="lg"
             className="gap-2 font-semibold px-6 bg-blue-500 hover:bg-blue-600 text-white border-0 disabled:opacity-40 shrink-0"
           >
-            {sendMessage.isPending
+            {isSending
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
               : <><Send className="w-4 h-4" /> Send</>
             }

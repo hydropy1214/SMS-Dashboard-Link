@@ -472,20 +472,33 @@ async function sendViaMessages(phoneNumber, content, fromPhone) {
   const safePhone = sanitiseForAppleScript(phoneNumber);
   const safeContent = sanitiseForAppleScript(content);
 
-  // Attempt list — when fromPhone is set, try that named service first (USB iPhone or specific account)
-  const attempts = [];
+  // When a specific device/service is requested, ONLY try that service — no silent fallbacks.
+  // Silent fallbacks cause false "sent" reports: the message goes via iMessage instead of the
+  // selected iPhone, so the UI shows "sent" even though the USB iPhone never sent anything.
   if (fromPhone) {
     const safeFrom = sanitiseForAppleScript(fromPhone);
-    attempts.push({
-      label: "USB/" + safeFrom,
-      script: \`tell application "Messages"\\nset s to service named "\${safeFrom}"\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\`,
-    });
+    const script = \`tell application "Messages"\\nset s to service named "\${safeFrom}"\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\`;
+    try {
+      await runAppleScript(script);
+      return { method: safeFrom };
+    } catch (err) {
+      const msg = err.message || "Unknown error";
+      let hint = msg;
+      if (msg.toLowerCase().includes("can't get service") || msg.toLowerCase().includes("invalid index") || msg.toLowerCase().includes("service named")) {
+        hint = \`'\${fromPhone}' is not available in Messages.app. Make sure Text Message Forwarding is enabled on the iPhone: Settings → Messages → Text Message Forwarding → allow this Mac.\`;
+      } else if (msg.toLowerCase().includes("can't get buddy") || msg.toLowerCase().includes("buddy")) {
+        hint = \`'\${phoneNumber}' is not reachable via '\${fromPhone}'. The number may not support SMS or forwarding may not be active for this contact.\`;
+      }
+      throw new Error(hint);
+    }
   }
-  attempts.push(
+
+  // No specific device — try iMessage → SMS → auto fallbacks
+  const attempts = [
     { label: "iMessage", script: \`tell application "Messages"\\nset s to 1st service whose service type = iMessage\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\` },
     { label: "SMS",      script: \`tell application "Messages"\\nset s to 1st service whose service type = SMS\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\` },
     { label: "auto",     script: \`tell application "Messages"\\nsend "\${safeContent}" to buddy "\${safePhone}"\\nend tell\` },
-  );
+  ];
 
   let lastErr = "Unknown error";
   for (const { label, script } of attempts) {
@@ -587,8 +600,31 @@ async function getWifiConnectedIphones() {
 }
 
 // ── Status ─────────────────────────────────────────────────────
+
+// Normalise a device name for fuzzy matching (strips punctuation/spaces).
+function normDeviceName(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Returns true when a USB hardware name and a Messages.app SMS service name
+// refer to the same iPhone.  Handles cases like:
+//   USB: "iPhone"          SMS: "John's iPhone"  → matches (USB name is a suffix)
+//   USB: "John's iPhone"   SMS: "John's iPhone"  → exact match
+//   USB: "John's iPhone 2" SMS: "John's iPhone"  → partial match (8+ shared prefix)
+function deviceNamesMatch(usbName, smsName) {
+  const u = normDeviceName(usbName);
+  const s = normDeviceName(smsName);
+  if (u === s) return true;
+  // SMS name contains the full USB name or vice-versa
+  if (s.includes(u) || u.includes(s)) return true;
+  // Share a long-enough prefix (≥8 chars) — e.g. "johnsiph" in both
+  const prefixLen = Math.min(u.length, s.length, 8);
+  if (prefixLen >= 5 && u.substring(0, prefixLen) === s.substring(0, prefixLen)) return true;
+  return false;
+}
+
 async function getStatus() {
-  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbDevices, wifiDevices] = await Promise.all([
+  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbHardwareNames, smsServiceNames] = await Promise.all([
     getMacosVersion(),
     checkAppleScriptAvailable(),
     checkMessagesRunning(),
@@ -596,6 +632,23 @@ async function getStatus() {
     getUsbConnectedIphones(),
     getWifiConnectedIphones().catch(() => []),
   ]);
+
+  // Cross-reference USB hardware names with Messages.app SMS service names.
+  //
+  // usbDevices   → SMS service names for iPhones that are BOTH physically USB-connected
+  //                AND have Text Message Forwarding enabled. These are the correct names
+  //                to pass as fromPhone when sending via a USB-connected iPhone.
+  // connectedDevices → SMS service names for Wi-Fi-only forwarding iPhones (not USB).
+  //
+  // Why: system_profiler returns hardware names like "iPhone" or "John's iPhone (2)"
+  // which are NOT the same as Messages.app service names. Using the wrong name causes
+  // 'service named "iPhone"' to fail in AppleScript, leading to incorrect fallback.
+  const usbSmsServices = smsServiceNames.filter(sms =>
+    usbHardwareNames.some(usb => deviceNamesMatch(usb, sms))
+  );
+  const wifiOnlySmsServices = smsServiceNames.filter(sms =>
+    !usbSmsServices.includes(sms)
+  );
 
   return {
     agentId: config.agentId,
@@ -609,8 +662,8 @@ async function getStatus() {
     messagesAppRunning: messagesRunning,
     appleScriptAvailable,
     connectedAccounts: accounts,
-    connectedDevices: wifiDevices,
-    usbDevices,
+    connectedDevices: wifiOnlySmsServices,
+    usbDevices: usbSmsServices,
     cpuUsage: getCpuUsage(),
     memoryUsage: getMemoryUsage(),
     uptime: Math.round(process.uptime()),
