@@ -6,8 +6,7 @@ import { Shell } from '@/components/layout/Shell';
 
 // Pages
 import Compose from '@/pages/Compose';
-import History from '@/pages/History';
-import Contacts from '@/pages/Contacts';
+import Activity from '@/pages/Activity';
 import Setup from '@/pages/Setup';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/not-found';
@@ -26,8 +25,7 @@ function Router() {
     <Shell>
       <Switch>
         <Route path="/" component={Compose} />
-        <Route path="/history" component={History} />
-        <Route path="/contacts" component={Contacts} />
+        <Route path="/activity" component={Activity} />
         <Route path="/setup" component={Setup} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
