@@ -261,10 +261,10 @@ if [[ -f "\$CONFIG_PATH" ]]; then
   EXISTING_ID=\$(node --input-type=module -e "
 import { readFileSync } from 'fs';
 try {
-  const c = JSON.parse(readFileSync(process.env.CFG, 'utf8'));
+  const c = JSON.parse(readFileSync('\$CONFIG_PATH', 'utf8'));
   process.stdout.write(c.agentId || '');
 } catch {}
-" CFG="\$CONFIG_PATH" 2>/dev/null || true)
+" 2>/dev/null || true)
 fi
 [[ -n "\$EXISTING_ID" ]] || EXISTING_ID=\$(node --input-type=module -e "
 import { randomUUID } from 'crypto';
@@ -275,18 +275,18 @@ if [[ -n "\$DISPATCH_URL" ]]; then
   CLEAN_URL="\${DISPATCH_URL%/}"
   node --input-type=module -e "
 import { writeFileSync } from 'fs';
-writeFileSync(process.env.CFG, JSON.stringify({
-  agentId: process.env.AID,
-  dispatchUrl: process.env.URL
+writeFileSync('\$CONFIG_PATH', JSON.stringify({
+  agentId: '\$EXISTING_ID',
+  dispatchUrl: '\$CLEAN_URL'
 }, null, 2));
-" CFG="\$CONFIG_PATH" AID="\$EXISTING_ID" URL="\$CLEAN_URL"
+"
   success "Dashboard URL: \$CLEAN_URL"
   success "Agent ID: \$EXISTING_ID"
 else
   node --input-type=module -e "
 import { writeFileSync } from 'fs';
-writeFileSync(process.env.CFG, JSON.stringify({ agentId: process.env.AID }, null, 2));
-" CFG="\$CONFIG_PATH" AID="\$EXISTING_ID"
+writeFileSync('\$CONFIG_PATH', JSON.stringify({ agentId: '\$EXISTING_ID' }, null, 2));
+"
   warn "DISPATCH_URL not set — heartbeats to the dashboard are disabled."
   warn "Re-run with: DISPATCH_URL=https://your-url bash dispatch-agent-setup.sh"
 fi
@@ -306,10 +306,10 @@ PORT=\${MAC_AGENT_PORT:-3001}
 DISPATCH_URL=\$(node --input-type=module -e "
 import { readFileSync } from 'fs';
 try {
-  const c = JSON.parse(readFileSync(process.env.CFG, 'utf8'));
+  const c = JSON.parse(readFileSync('\$CONFIG', 'utf8'));
   process.stdout.write(c.dispatchUrl || '');
 } catch {}
-" CFG="\$CONFIG" 2>/dev/null || true)
+" 2>/dev/null || true)
 
 echo "" > "\$TUNNEL_LOG"
 npx cloudflared tunnel --url "http://localhost:\$PORT" >> "\$TUNNEL_LOG" 2>&1 &
@@ -459,9 +459,10 @@ if [[ -n "\$TUNNEL_URL" ]]; then
   success "Tunnel URL: \$TUNNEL_URL"
   if [[ -n "\$DISPATCH_URL" ]]; then
     CLEAN_DISPATCH="\${DISPATCH_URL%/}"
+    JSON_BODY=\$(printf '{"macAgentUrl":"%s"}' "\$TUNNEL_URL")
     HTTP_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "\$CLEAN_DISPATCH/api/settings" \\
       -H "Content-Type: application/json" \\
-      -d "{\"macAgentUrl\":\"\$TUNNEL_URL\"}" 2>/dev/null || echo "000")
+      -d "\$JSON_BODY" 2>/dev/null || echo "000")
     if [[ "\$HTTP_STATUS" == "200" ]]; then
       success "Tunnel URL registered with Dispatch — no manual step needed!"
     else
@@ -490,7 +491,7 @@ fi
 # ── 8. Done ────────────────────────────────────────────────
 echo ""
 echo "  ┌─────────────────────────────────────────────────────┐"
-echo "  │  \${GREEN}\${BOLD}Setup complete!\${RESET}                                    │"
+echo -e "  │  \${GREEN}\${BOLD}Setup complete!\${RESET}                                    │"
 echo "  └─────────────────────────────────────────────────────┘"
 echo ""
 

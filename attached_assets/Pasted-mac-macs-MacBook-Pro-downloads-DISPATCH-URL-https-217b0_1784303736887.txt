@@ -1,0 +1,78 @@
+mac@macs-MacBook-Pro downloads % DISPATCH_URL="https://217b0abe-7fcd-4d38-8b1a-27d5744d1d00-00-30d47dhoueka0.pike.replit.dev" bash ~/Downloads/dispatch-agent-setup.sh
+
+  ┌─────────────────────────────────────────────┐
+  │   Dispatch Mac Agent  ·  Installer v4.0     │
+  └─────────────────────────────────────────────┘
+
+
+  ── Step 1: Checking Requirements ──
+
+  ✓ macOS detected
+  ✓ Node.js v24.18.0 (/usr/local/bin/node)
+  ✓ npx available
+
+  ── Step 2: Preparing Clean Start ──
+
+  ✓ Port 3001 is free
+
+  ── Step 3: Installing Agent ──
+
+  ✓ Agent directory: /Users/mac/.dispatch-agent
+  ✓ package.json written
+  ✓ server.js written
+node:fs:2419
+      path = getValidatedPath(path);
+             ^
+
+TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string or an instance of Buffer or URL. Received undefined
+    at writeFileSync (node:fs:2419:14)
+    at file:///Users/mac/Downloads/[eval1]:3:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:224:26
+    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:221:20)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v24.18.0
+  ✓ Dashboard URL: https://217b0abe-7fcd-4d38-8b1a-27d5744d1d00-00-30d47dhoueka0.pike.replit.dev
+  ✓ Agent ID: d1c0bb31-a0c3-4eae-91de-61f5076e3e28
+  ✓ Tunnel script written
+
+  ── Step 4: Auto-Start ──
+
+  Install as a background service that starts automatically
+  at login? This is recommended — both the agent and tunnel
+  will restart if your Mac reboots.
+
+  Install background service? [Y/n] y
+
+  ✓ Agent service installed and running
+  ✓ Tunnel service installed and running
+
+  ── Step 5: Connecting Tunnel ──
+
+  → Waiting for Cloudflare tunnel URL (up to 60 seconds)...
+  ✓ Tunnel URL: https://copper-receptor-mobility-removed.trycloudflare.com
+  ⚠ Auto-register failed (HTTP 400). Paste this URL into
+  ⚠ Dispatch → Settings → Mac Agent URL:
+
+      https://copper-receptor-mobility-removed.trycloudflare.com
+
+
+  ┌─────────────────────────────────────────────────────┐
+  │  \033[0;32m\033[1mSetup complete!\033[0m                                    │
+  └─────────────────────────────────────────────────────┘
+
+  ✓ Agent is running in the background (auto-restarts at login)
+  ✓ Tunnel is running in the background (auto-restarts)
+
+  → Useful commands:
+  →   View agent logs : tail -f /Users/mac/.dispatch-agent/logs/agent-stdout.log
+  →   View tunnel logs: tail -f /Users/mac/.dispatch-agent/logs/tunnel-stdout.log
+  →   Stop everything : launchctl unload /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist
+  →   Restart         : launchctl unload /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist && launchctl load /Users/mac/Library/LaunchAgents/com.dispatch.agent.plist /Users/mac/Library/LaunchAgents/com.dispatch.tunnel.plist
+
+  → You can close this Terminal window — the agent runs in the background.
+
+mac@macs-MacBook-Pro downloads % 
