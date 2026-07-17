@@ -59,7 +59,7 @@ const USB_STEPS = [
     bg: "bg-blue-500/10 border-blue-500/25",
     badge: "USB · Step 2 of 4",
     badgeClass: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    title: "Tap "Trust" on your iPhone",
+    title: 'Tap "Trust" on your iPhone',
     desc: "The first time you plug in, your iPhone shows a Trust prompt. Tap Trust and enter your passcode if asked.",
     tips: [
       "Only appears the first time you connect",
