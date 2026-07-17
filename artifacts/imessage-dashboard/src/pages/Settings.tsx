@@ -16,7 +16,7 @@ import {
   Settings as SettingsIcon, Wifi, WifiOff, Save, RefreshCw,
   Loader2, CheckCircle2, AlertCircle, Clock, Monitor, Zap,
   MessageSquare, Smartphone, Download, Link2, Activity,
-  ChevronRight,
+  ChevronRight, Cable,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -322,6 +322,49 @@ export default function Settings() {
               No accounts detected. Make sure Messages.app is open and signed in.
             </p>
           )}
+        </Section>
+      )}
+
+      {/* ── USB-connected iPhones ── */}
+      {isConnected && macStatus?.connected && (
+        <Section title="USB-Connected iPhones" icon={<Cable className="w-4 h-4" />}>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            iPhones physically plugged into your Mac via USB cable. USB connections are faster and more
+            reliable than Wi-Fi for Text Message Forwarding.
+          </p>
+          {(() => {
+            const usbDevices: string[] = (onlineAgents[0] as any)?.usbDevices ?? [];
+            if (usbDevices.length === 0) {
+              return (
+                <div className="flex flex-col items-center justify-center py-6 text-center space-y-1.5 rounded-lg border border-border/50 bg-secondary/10">
+                  <Cable className="w-5 h-5 text-muted-foreground/40" />
+                  <p className="text-sm font-medium text-foreground">No iPhones connected via USB</p>
+                  <p className="text-xs text-muted-foreground max-w-xs">
+                    Plug an iPhone into your Mac with a USB cable and it will appear here automatically.
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div className="space-y-1.5">
+                {usbDevices.map((dev: string, i: number) => (
+                  <div key={i} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-secondary/30 border border-border/60 text-sm">
+                    <Cable className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                    <span className="font-mono text-xs text-foreground/80">{dev}</span>
+                    <Badge className="ml-auto text-[10px] px-1.5 bg-violet-500/10 text-violet-400 border-violet-500/20">USB</Badge>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+          <div className="rounded-lg border border-border/40 bg-secondary/10 px-4 py-3 space-y-1">
+            <p className="text-xs font-medium text-foreground">Why use USB?</p>
+            <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+              <li>More stable than Wi-Fi — no dropped connections during bulk sends</li>
+              <li>Faster response time for Text Message Forwarding</li>
+              <li>Works even when your Mac's Wi-Fi is congested</li>
+            </ul>
+          </div>
         </Section>
       )}
 

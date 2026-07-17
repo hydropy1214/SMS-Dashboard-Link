@@ -13,6 +13,7 @@ export const macAgentsTable = pgTable("mac_agents", {
   appleScriptAvailable: boolean("apple_script_available"),
   connectedAccounts: text("connected_accounts").array(),
   connectedDevices: text("connected_devices").array(),
+  usbDevices: text("usb_devices").array(),
   latencyMs: integer("latency_ms"),
   cpuUsage: real("cpu_usage"),
   memoryUsage: real("memory_usage"),

@@ -23,6 +23,7 @@ function serialiseAgent(row: typeof macAgentsTable.$inferSelect) {
     status: online ? "online" : "offline",
     connectedAccounts: row.connectedAccounts ?? [],
     connectedDevices: row.connectedDevices ?? [],
+    usbDevices: row.usbDevices ?? [],
     queueSize: row.queueSize ?? 0,
     lastHeartbeatAt: row.lastHeartbeatAt?.toISOString() ?? null,
     lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
@@ -69,6 +70,7 @@ const heartbeatSchema = z.object({
   appleScriptAvailable: z.boolean(),
   connectedAccounts: z.array(z.string()),
   connectedDevices: z.array(z.string()),
+  usbDevices: z.array(z.string()).optional().default([]),
   latencyMs: z.number().int().nullable().optional(),
   cpuUsage: z.number().min(0).max(100),
   memoryUsage: z.number().min(0).max(100),
@@ -104,6 +106,7 @@ router.post("/agents/heartbeat", async (req, res) => {
         appleScriptAvailable: hb.appleScriptAvailable,
         connectedAccounts: hb.connectedAccounts,
         connectedDevices: hb.connectedDevices,
+        usbDevices: hb.usbDevices,
         latencyMs: hb.latencyMs ?? null,
         cpuUsage: hb.cpuUsage,
         memoryUsage: hb.memoryUsage,
@@ -127,6 +130,7 @@ router.post("/agents/heartbeat", async (req, res) => {
           appleScriptAvailable: hb.appleScriptAvailable,
           connectedAccounts: hb.connectedAccounts,
           connectedDevices: hb.connectedDevices,
+          usbDevices: hb.usbDevices,
           latencyMs: hb.latencyMs ?? null,
           cpuUsage: hb.cpuUsage,
           memoryUsage: hb.memoryUsage,
@@ -535,13 +539,35 @@ async function getMacosVersion() {
   } catch { return null; }
 }
 
+async function getUsbConnectedIphones() {
+  try {
+    const { stdout } = await execAsync("system_profiler SPUSBDataType -json", { timeout: 8000 });
+    const data = JSON.parse(stdout);
+    const devices = [];
+    function walk(items) {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        const name = item._name || item.product_name || "";
+        if (name.toLowerCase().includes("iphone")) {
+          devices.push(name);
+        }
+        if (item._items) walk(item._items);
+      }
+    }
+    const usb = data.SPUSBDataType || [];
+    walk(usb);
+    return devices;
+  } catch { return []; }
+}
+
 // ── Status ─────────────────────────────────────────────────────
 async function getStatus() {
-  const [macosVersion, appleScriptAvailable, messagesRunning, accounts] = await Promise.all([
+  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbDevices] = await Promise.all([
     getMacosVersion(),
     checkAppleScriptAvailable(),
     checkMessagesRunning(),
     getMessagesAccounts().catch(() => []),
+    getUsbConnectedIphones(),
   ]);
 
   return {
@@ -557,6 +583,7 @@ async function getStatus() {
     appleScriptAvailable,
     connectedAccounts: accounts,
     connectedDevices: [],
+    usbDevices,
     cpuUsage: getCpuUsage(),
     memoryUsage: getMemoryUsage(),
     uptime: Math.round(process.uptime()),
@@ -585,6 +612,7 @@ async function sendHeartbeat() {
       appleScriptAvailable: status.appleScriptAvailable,
       connectedAccounts: status.connectedAccounts,
       connectedDevices: status.connectedDevices,
+      usbDevices: status.usbDevices,
       latencyMs: null,
       cpuUsage: status.cpuUsage,
       memoryUsage: status.memoryUsage,

@@ -100,6 +100,27 @@ async function getMacOSVersion() {
   } catch { return null; }
 }
 
+async function getUsbConnectedIphones() {
+  try {
+    const { stdout } = await execAsync("system_profiler SPUSBDataType -json", { timeout: 8000 });
+    const data = JSON.parse(stdout);
+    const devices = [];
+    function walk(items) {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        const name = item._name || item.product_name || "";
+        if (name.toLowerCase().includes("iphone")) {
+          devices.push(name);
+        }
+        if (item._items) walk(item._items);
+      }
+    }
+    const usb = data.SPUSBDataType || [];
+    walk(usb);
+    return devices;
+  } catch { return []; }
+}
+
 // ── Message sending: iMessage → SMS → auto fallback ───────
 async function runAppleScript(script, timeout) {
   // Escape single quotes for shell embedding: ' → '"'"'
@@ -159,11 +180,12 @@ let lastHeartbeatAt = null;
 async function sendHeartbeat() {
   if (!DISPATCH_URL) return;
   try {
-    const [appleScriptAvailable, messagesRunning, accounts, macosVersion] = await Promise.all([
+    const [appleScriptAvailable, messagesRunning, accounts, macosVersion, usbDevices] = await Promise.all([
       checkAppleScript(),
       checkMessagesRunning(),
       getMessagesAccounts(),
       getMacOSVersion(),
+      getUsbConnectedIphones(),
     ]);
     const mem = process.memoryUsage();
     const payload = {
@@ -178,6 +200,7 @@ async function sendHeartbeat() {
       appleScriptAvailable,
       connectedAccounts: accounts,
       connectedDevices: [],
+      usbDevices,
       cpuUsage: 0,
       memoryUsage: Math.round((mem.heapUsed / mem.heapTotal) * 100),
       queueSize: 0,
