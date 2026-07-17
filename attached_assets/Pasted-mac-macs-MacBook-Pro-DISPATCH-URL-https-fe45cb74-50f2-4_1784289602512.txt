@@ -1,0 +1,48 @@
+mac@macs-MacBook-Pro ~ % DISPATCH_URL="https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev" bash ~/Downloads/dispatch-agent-setup.sh
+
+  ┌─────────────────────────────────────────────┐
+  │   Dispatch Mac Agent  ·  Installer v3.0     │
+  └─────────────────────────────────────────────┘
+
+
+  ── Step 1: Checking Requirements ──
+  ✓ macOS detected
+  ✓ Node.js v24.18.0
+
+  ── Step 2: Installing Agent ──
+  ✓ Agent directory: /Users/mac/.dispatch-agent
+  ✓ package.json written
+  ✓ server.js written
+
+  ── Step 3: Saving Dashboard URL ──
+  Config saved.
+  ✓ Dashboard URL saved: https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev
+  ✓ Agent ID: 3fcf68a3-08d6-4ce2-82f0-df132bf2c86f
+
+  ── Step 4: Auto-Start (optional) ──
+  Install LaunchAgent to start automatically at login? [y/N] y
+  ✓ LaunchAgent installed and started
+
+  ── Step 5: Starting Mac Agent ──
+
+  Starting agent. Keep this Terminal window open.
+  Open a NEW Terminal for the tunnel command.
+
+file:///Users/mac/.dispatch-agent/server.js:61
+      "osascript -e 'tell application "System Events" to (name of processes) contains "Messages"'",
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+SyntaxError: missing ) after argument list
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:89:18)
+    at #translate (node:internal/modules/esm/loader:434:20)
+    at afterLoad (node:internal/modules/esm/loader:502:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:507:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:560:36)
+    at afterResolve (node:internal/modules/esm/loader:607:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:613:12)
+    at node:internal/modules/esm/loader:632:32
+    at TracingChannel.tracePromise (node:diagnostics_channel:362:14)
+
+Node.js v24.18.0
+mac@macs-MacBook-Pro ~ %
