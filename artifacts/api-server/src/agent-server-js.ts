@@ -41,10 +41,16 @@ if (!config.agentId) {
 if (process.env.DISPATCH_URL) {
   config.dispatchUrl = process.env.DISPATCH_URL.replace(/\/+$/, "");
 }
+// Persist MAC_AGENT_URL from env — the tunnel URL the dashboard uses to reach THIS agent.
+// Set this when running multiple agents: MAC_AGENT_URL=https://xxx.trycloudflare.com node server.js
+if (process.env.MAC_AGENT_URL) {
+  config.macAgentUrl = process.env.MAC_AGENT_URL.replace(/\/+$/, "");
+}
 saveConfig(config);
 
 const AGENT_ID = config.agentId;
 const DISPATCH_URL = config.dispatchUrl || null;
+const MAC_AGENT_URL = config.macAgentUrl || null;
 
 // ── HTTP helpers ──────────────────────────────────────────
 function cors(res) {
@@ -177,6 +183,7 @@ async function sendHeartbeat() {
       queueSize: 0,
       lastActivityAt: null,
       latencyMs: null,
+      macAgentUrl: MAC_AGENT_URL,
     };
     const r = await fetch(DISPATCH_URL + "/api/agents/heartbeat", {
       method: "POST",

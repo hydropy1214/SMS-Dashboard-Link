@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useCallback } from "react";
 import {
   useSendMessage,
   useGetMacAgentStatus,
+  useGetAgents,
   getGetMacAgentStatusQueryKey,
   getGetMessagesQueryKey,
 } from "@workspace/api-client-react";
@@ -11,8 +12,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Send, X, AlertCircle, CheckCircle2, Settings as SettingsIcon,
-  Zap, Users, Upload, FileText, Loader2, XCircle, Clock,
+  Zap, Users, Upload, FileText, Loader2, XCircle, Clock, Monitor, ChevronDown,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { motion, AnimatePresence } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -62,11 +71,19 @@ interface SendProgress {
 
 /* ─── component ─────────────────────────────────────────────── */
 
+const OFFLINE_MS = 90_000;
+
+function agentIsOnline(lastHeartbeatAt?: string | null) {
+  if (!lastHeartbeatAt) return false;
+  return Date.now() - new Date(lastHeartbeatAt).getTime() < OFFLINE_MS;
+}
+
 export default function Compose() {
   const [rawNumbers, setRawNumbers] = useState("");
   const [message, setMessage] = useState("");
   const [showInvalid, setShowInvalid] = useState(false);
   const [sendProgress, setSendProgress] = useState<SendProgress | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -74,6 +91,17 @@ export default function Compose() {
   const { data: macStatus } = useGetMacAgentStatus({
     query: { queryKey: getGetMacAgentStatusQueryKey(), refetchInterval: 8000, retry: false },
   });
+  const { data: allAgents = [] } = useGetAgents({
+    query: { refetchInterval: 15_000, retry: false },
+  });
+
+  const onlineAgents = useMemo(
+    () => allAgents.filter(a => agentIsOnline(a.lastHeartbeatAt)),
+    [allAgents],
+  );
+
+  // Auto-clear selectedAgentId if that agent goes offline
+  const selectedAgent = onlineAgents.find(a => a.agentId === selectedAgentId) ?? null;
 
   const { unique: recipients, dupes, invalid } = useMemo(() => parseNumbers(rawNumbers), [rawNumbers]);
 
@@ -118,7 +146,7 @@ export default function Compose() {
     setSendProgress({ sent: 0, failed: 0, total: recipients.length });
 
     sendMessage.mutate(
-      { data: { phoneNumbers: recipients, content: message } },
+      { data: { phoneNumbers: recipients, content: message, ...(selectedAgent ? { agentId: selectedAgent.agentId } : {}) } },
       {
         onSuccess: (data: any) => {
           const { sent = 0, failed = 0, total = 0, results = [] } = data ?? {};
@@ -151,23 +179,84 @@ export default function Compose() {
   return (
     <div className="space-y-6 pb-12">
       {/* Page header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="sp-page-title mb-1">Compose Message</h1>
           <p className="text-sm text-zinc-500">Paste phone numbers, write your message, send.</p>
         </div>
-        {macKnown && (
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium ${
-            isConnected
-              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-              : "bg-red-500/10 border-red-500/20 text-red-400"
-          }`}>
-            {isConnected
-              ? <><CheckCircle2 className="w-3 h-3" /> Mac Connected</>
-              : <><AlertCircle className="w-3 h-3" /> Mac Offline</>
-            }
-          </div>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Agent / iPhone picker — visible when 2+ agents are online */}
+          {onlineAgents.length >= 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-card text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors">
+                  <Monitor className="w-3 h-3" />
+                  {selectedAgent
+                    ? <span className="max-w-[120px] truncate">{selectedAgent.hostname}</span>
+                    : <span>Any Mac ({onlineAgents.length} online)</span>
+                  }
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Send from…</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => setSelectedAgentId(null)}
+                  className="gap-2 cursor-pointer"
+                >
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium">Any available Mac</p>
+                    <p className="text-[10px] text-muted-foreground">Dispatch picks the least-loaded agent</p>
+                  </div>
+                  {!selectedAgent && <CheckCircle2 className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {onlineAgents.map(agent => {
+                  const accounts = agent.connectedAccounts ?? [];
+                  const isSelected = selectedAgent?.agentId === agent.agentId;
+                  return (
+                    <DropdownMenuItem
+                      key={agent.agentId}
+                      onSelect={() => setSelectedAgentId(agent.agentId)}
+                      className="gap-2 cursor-pointer"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{agent.hostname}</p>
+                        {accounts.length > 0
+                          ? <p className="text-[10px] text-muted-foreground truncate">{accounts.join(", ")}</p>
+                          : <p className="text-[10px] text-muted-foreground">No accounts detected</p>
+                        }
+                      </div>
+                      {isSelected && <CheckCircle2 className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+                {onlineAgents.length === 0 && (
+                  <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                    No Macs online
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Mac connection status pill */}
+          {macKnown && (
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium ${
+              isConnected
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                : "bg-red-500/10 border-red-500/20 text-red-400"
+            }`}>
+              {isConnected
+                ? <><CheckCircle2 className="w-3 h-3" /> {onlineAgents.length > 1 ? `${onlineAgents.length} Macs` : "Mac Connected"}</>
+                : <><AlertCircle className="w-3 h-3" /> Mac Offline</>
+              }
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Mac Agent warning */}

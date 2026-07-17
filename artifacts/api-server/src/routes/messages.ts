@@ -10,6 +10,8 @@ const router = Router();
 const sendMessageInputSchema = z.object({
   phoneNumbers: z.array(z.string().min(1)).min(1),
   content: z.string().min(1).max(10000),
+  /** Route to a specific agent. If omitted the least-loaded online agent is chosen. */
+  agentId: z.string().optional(),
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -149,8 +151,49 @@ router.post("/messages/send", async (req, res) => {
     return;
   }
 
-  const { phoneNumbers, content } = parsed.data;
-  const agentUrl = await getMacAgentUrl();
+  const { phoneNumbers, content, agentId: requestedAgentId } = parsed.data;
+
+  // Resolve which agent to use and its URL
+  const OFFLINE_THRESHOLD_MS = 90_000;
+  let agentUrl: string | null = null;
+  let activeAgentId: string | null = null;
+
+  if (requestedAgentId) {
+    // Caller specified a particular agent — use it or fail clearly
+    const rows = await db.select().from(macAgentsTable).where(eq(macAgentsTable.agentId, requestedAgentId)).limit(1);
+    const agent = rows[0];
+    if (!agent) {
+      res.status(404).json({ error: `Agent '${requestedAgentId}' not found` });
+      return;
+    }
+    const isOnline = agent.lastHeartbeatAt && (Date.now() - agent.lastHeartbeatAt.getTime() < OFFLINE_THRESHOLD_MS);
+    if (!isOnline) {
+      res.status(503).json({ error: `Agent '${agent.hostname}' is offline` });
+      return;
+    }
+    agentUrl = agent.macAgentUrl ?? await getMacAgentUrl();
+    activeAgentId = agent.agentId;
+  } else {
+    // Pick the least-loaded online agent that has a URL registered
+    const allAgents = await db.select().from(macAgentsTable).orderBy(desc(macAgentsTable.lastHeartbeatAt));
+    const onlineWithUrl = allAgents.filter(a =>
+      a.macAgentUrl &&
+      a.lastHeartbeatAt &&
+      Date.now() - a.lastHeartbeatAt.getTime() < OFFLINE_THRESHOLD_MS
+    );
+    if (onlineWithUrl.length > 0) {
+      // Pick the one with the lowest queueSize
+      const best = onlineWithUrl.reduce((a, b) => (a.queueSize ?? 0) <= (b.queueSize ?? 0) ? a : b);
+      agentUrl = best.macAgentUrl!;
+      activeAgentId = best.agentId;
+    } else {
+      // Fall back to the global settings URL with the most recent agent
+      agentUrl = await getMacAgentUrl();
+      activeAgentId = allAgents.find(a =>
+        a.lastHeartbeatAt && Date.now() - a.lastHeartbeatAt.getTime() < OFFLINE_THRESHOLD_MS
+      )?.agentId ?? null;
+    }
+  }
 
   if (!agentUrl) {
     const results = [];
@@ -165,10 +208,6 @@ router.post("/messages/send", async (req, res) => {
     res.status(503).json({ error: "Mac Agent not configured", sent: 0, failed: phoneNumbers.length, total: phoneNumbers.length, results });
     return;
   }
-
-  // Find active agent ID for tracking
-  const agents = await db.select().from(macAgentsTable).orderBy(desc(macAgentsTable.lastHeartbeatAt)).limit(1);
-  const activeAgentId = agents[0]?.agentId ?? null;
 
   let agentResults: Array<{ phoneNumber: string; success: boolean; error?: string; durationMs?: number }> = [];
   let agentError: string | null = null;

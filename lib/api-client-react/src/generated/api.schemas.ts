@@ -82,6 +82,8 @@ export interface MessageInput {
   phoneNumbers: string[];
   /** @minLength 1 */
   content: string;
+  /** Route to a specific agent by agentId. If omitted the least-loaded online agent is chosen. */
+  agentId?: string;
 }
 
 export interface SendResult {

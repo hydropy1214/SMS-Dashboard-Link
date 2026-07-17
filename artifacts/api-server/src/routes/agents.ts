@@ -74,6 +74,8 @@ const heartbeatSchema = z.object({
   memoryUsage: z.number().min(0).max(100),
   queueSize: z.number().int().min(0),
   lastActivityAt: z.string().nullable().optional(),
+  /** The HTTPS tunnel URL the dashboard should use to reach this agent. */
+  macAgentUrl: z.string().url().nullable().optional(),
 });
 
 router.post("/agents/heartbeat", async (req, res) => {
@@ -109,6 +111,7 @@ router.post("/agents/heartbeat", async (req, res) => {
         status: "online",
         lastHeartbeatAt: now,
         lastActivityAt: hb.lastActivityAt ? new Date(hb.lastActivityAt) : now,
+        macAgentUrl: hb.macAgentUrl ?? null,
         updatedAt: now,
       })
       .onConflictDoUpdate({
@@ -131,6 +134,8 @@ router.post("/agents/heartbeat", async (req, res) => {
           status: "online",
           lastHeartbeatAt: now,
           lastActivityAt: hb.lastActivityAt ? new Date(hb.lastActivityAt) : now,
+          // Only overwrite macAgentUrl when the heartbeat actually carries one
+          ...(hb.macAgentUrl != null ? { macAgentUrl: hb.macAgentUrl } : {}),
           updatedAt: now,
         },
       });

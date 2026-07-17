@@ -1,0 +1,58 @@
+mac@macs-MacBook-Pro downloads % launchctl unload ~/Library/LaunchAgents/com.dispatch.agent.plist 2>/dev/null; DISPATCH_URL="https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev" bash ~/Downloads/dispatch-agent-setup.sh
+
+  ┌─────────────────────────────────────────────┐
+  │   Dispatch Mac Agent  ·  Installer v3.0     │
+  └─────────────────────────────────────────────┘
+
+
+  ── Step 1: Checking Requirements ──
+  ✓ macOS detected
+  ✓ Node.js v24.18.0
+
+  ── Step 2: Installing Agent ──
+  ✓ Agent directory: /Users/mac/.dispatch-agent
+  ✓ package.json written
+  ✓ server.js written
+
+  ── Step 3: Saving Dashboard URL ──
+  Config saved.
+  ✓ Dashboard URL saved: https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev
+  ✓ Agent ID: 3fcf68a3-08d6-4ce2-82f0-df132bf2c86f
+
+  ── Step 4: Auto-Start (optional) ──
+  Install LaunchAgent to start automatically at login? [y/N] y
+  ✓ LaunchAgent installed and started
+
+  ── Step 5: Starting Mac Agent ──
+
+  Starting agent. Keep this Terminal window open.
+  Open a NEW Terminal for the tunnel command.
+
+
+  ╭──────────────────────────────────────────────────────╮
+  │  Dispatch Mac Agent v3.0.0                          │
+  │  Agent ID: 3fcf68a3…                              │
+  ╰──────────────────────────────────────────────────────╯
+
+  Local URL : http://localhost:3001
+  Status    : http://localhost:3001/status
+  Dashboard : https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev
+  Heartbeat : every 30 seconds  ✓
+
+  Sending first heartbeat...
+  ✓ Heartbeat → https://fe45cb74-50f2-42d9-bd30-5b09925c4d1a-00-ol3ce4tz2glo.sisko.replit.dev (200)
+
+  ─── Next steps ────────────────────────────────────────────
+  Open a NEW Terminal and start a tunnel:
+
+    Cloudflare (free, no account):
+      npx cloudflared tunnel --url http://localhost:3001
+
+    ngrok (free account required):
+      ngrok http 3001
+
+  Copy the HTTPS URL the tunnel prints, then paste it
+  in Dispatch → Settings → Mac Agent URL.
+
+  Keep this Terminal window open while using Dispatch.
+  Press Ctrl+C to stop.
