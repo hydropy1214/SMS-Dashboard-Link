@@ -278,6 +278,7 @@ fi
 # ── 7. LaunchAgent (optional auto-start) ───────────────────
 header "Step 4: Auto-Start (optional)"
 read -r -p "  Install LaunchAgent to start automatically at login? [y/N] " INSTALL_LAUNCH
+LAUNCH_AGENT_STARTED=false
 if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
   NODE_BIN=\$(command -v node)
   if [[ -z "\$NODE_BIN" ]]; then
@@ -287,6 +288,8 @@ if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
   PLIST_DIR="\$HOME/Library/LaunchAgents"
   PLIST_FILE="\$PLIST_DIR/com.dispatch.agent.plist"
   mkdir -p "\$PLIST_DIR"
+  # Unload any existing instance first to avoid port conflicts on re-runs
+  launchctl unload "\$PLIST_FILE" 2>/dev/null || true
   cat > "\$PLIST_FILE" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -317,22 +320,35 @@ if [[ "\$INSTALL_LAUNCH" =~ ^[Yy]$ ]]; then
 </dict>
 </plist>
 PLISTEOF
-  launchctl load "\$PLIST_FILE" 2>/dev/null && success "LaunchAgent installed and started (using \$NODE_BIN)" || warn "Could not load LaunchAgent automatically. Run: launchctl load \$PLIST_FILE"
+  if launchctl load "\$PLIST_FILE" 2>/dev/null; then
+    success "LaunchAgent installed and started (using \$NODE_BIN)"
+    LAUNCH_AGENT_STARTED=true
+  else
+    warn "Could not load LaunchAgent automatically. Run: launchctl load \$PLIST_FILE"
+  fi
 else
   info "Skipping LaunchAgent"
 fi
 
-# ── 8. Start ───────────────────────────────────────────────
-header "Step 5: Starting Mac Agent"
-echo ""
-echo "  Starting agent. Keep this Terminal window open."
-echo "  Open a NEW Terminal for the tunnel command."
-echo ""
-
-if [[ -n "\$DISPATCH_URL" ]]; then
-  DISPATCH_URL="\$DISPATCH_URL" node "\$AGENT_DIR/server.js"
+# ── 8. Start (only if LaunchAgent didn't already start it) ─
+if [[ "\$LAUNCH_AGENT_STARTED" == "true" ]]; then
+  echo ""
+  success "Agent is running in the background via LaunchAgent."
+  info "Logs: \$LOG_DIR/stdout.log"
+  info "To stop:   launchctl unload \$HOME/Library/LaunchAgents/com.dispatch.agent.plist"
+  info "To restart: launchctl unload \$HOME/Library/LaunchAgents/com.dispatch.agent.plist && launchctl load \$HOME/Library/LaunchAgents/com.dispatch.agent.plist"
+  echo ""
 else
-  node "\$AGENT_DIR/server.js"
+  header "Step 5: Starting Mac Agent"
+  echo ""
+  echo "  Starting agent. Keep this Terminal window open."
+  echo "  Open a NEW Terminal for the tunnel command."
+  echo ""
+  if [[ -n "\$DISPATCH_URL" ]]; then
+    DISPATCH_URL="\$DISPATCH_URL" node "\$AGENT_DIR/server.js"
+  else
+    node "\$AGENT_DIR/server.js"
+  fi
 fi
 `;
 
