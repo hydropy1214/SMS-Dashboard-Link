@@ -574,14 +574,27 @@ async function getUsbConnectedIphones() {
   } catch { return []; }
 }
 
+async function getWifiConnectedIphones() {
+  try {
+    const { stdout } = await execAsync(
+      \`osascript -e 'tell application "Messages" to get name of (services whose service type = SMS)'\`,
+      { timeout: 8000 }
+    );
+    const raw = stdout.trim();
+    if (!raw) return [];
+    return raw.split(", ").map(s => s.trim()).filter(Boolean);
+  } catch { return []; }
+}
+
 // ── Status ─────────────────────────────────────────────────────
 async function getStatus() {
-  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbDevices] = await Promise.all([
+  const [macosVersion, appleScriptAvailable, messagesRunning, accounts, usbDevices, wifiDevices] = await Promise.all([
     getMacosVersion(),
     checkAppleScriptAvailable(),
     checkMessagesRunning(),
     getMessagesAccounts().catch(() => []),
     getUsbConnectedIphones(),
+    getWifiConnectedIphones().catch(() => []),
   ]);
 
   return {
@@ -596,7 +609,7 @@ async function getStatus() {
     messagesAppRunning: messagesRunning,
     appleScriptAvailable,
     connectedAccounts: accounts,
-    connectedDevices: [],
+    connectedDevices: wifiDevices,
     usbDevices,
     cpuUsage: getCpuUsage(),
     memoryUsage: getMemoryUsage(),

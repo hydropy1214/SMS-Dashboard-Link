@@ -121,6 +121,19 @@ async function getUsbConnectedIphones() {
   } catch { return []; }
 }
 
+// Detect iPhones doing Wi-Fi Text Message Forwarding (SMS services in Messages.app)
+async function getWifiConnectedIphones() {
+  try {
+    const { stdout } = await execAsync(
+      "osascript -e 'tell application \"Messages\" to get name of (services whose service type = SMS)'",
+      { timeout: 8000 }
+    );
+    const raw = stdout.trim();
+    if (!raw) return [];
+    return raw.split(", ").map(s => s.trim()).filter(Boolean);
+  } catch { return []; }
+}
+
 // ── Message sending: iMessage → SMS → auto fallback ───────
 async function runAppleScript(script, timeout) {
   // Escape single quotes for shell embedding: ' → '"'"'
@@ -193,12 +206,13 @@ let lastHeartbeatAt = null;
 async function sendHeartbeat() {
   if (!DISPATCH_URL) return;
   try {
-    const [appleScriptAvailable, messagesRunning, accounts, macosVersion, usbDevices] = await Promise.all([
+    const [appleScriptAvailable, messagesRunning, accounts, macosVersion, usbDevices, wifiDevices] = await Promise.all([
       checkAppleScript(),
       checkMessagesRunning(),
       getMessagesAccounts(),
       getMacOSVersion(),
       getUsbConnectedIphones(),
+      getWifiConnectedIphones(),
     ]);
     const mem = process.memoryUsage();
     const payload = {
@@ -212,7 +226,7 @@ async function sendHeartbeat() {
       messagesAppAvailable: messagesRunning,
       appleScriptAvailable,
       connectedAccounts: accounts,
-      connectedDevices: [],
+      connectedDevices: wifiDevices,
       usbDevices,
       cpuUsage: 0,
       memoryUsage: Math.round((mem.heapUsed / mem.heapTotal) * 100),

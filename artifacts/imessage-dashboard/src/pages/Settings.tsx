@@ -326,23 +326,26 @@ export default function Settings() {
         </Section>
       )}
 
-      {/* ── USB-connected iPhones ── */}
+      {/* ── Connected iPhones (USB + Wi-Fi) ── */}
       {isConnected && macStatus?.connected && (
-        <Section title="USB-Connected iPhones" icon={<Cable className="w-4 h-4" />}>
+        <Section title="Connected iPhones" icon={<Cable className="w-4 h-4" />}>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            iPhones physically plugged into your Mac via USB cable. USB connections are faster and more
-            reliable than Wi-Fi for Text Message Forwarding.
+            iPhones available for sending. USB-connected phones are detected automatically when plugged in.
+            Wi-Fi phones appear after enabling Text Message Forwarding on the iPhone.
           </p>
           {(() => {
             const usbDevices: string[] = (onlineAgents[0] as any)?.usbDevices ?? [];
-            if (usbDevices.length === 0) {
+            const wifiDevices: string[] = (onlineAgents[0] as any)?.connectedDevices ?? [];
+            const hasAny = usbDevices.length > 0 || wifiDevices.length > 0;
+
+            if (!hasAny) {
               return (
                 <div className="flex flex-col items-center justify-center py-6 text-center space-y-3 rounded-lg border border-border/50 bg-secondary/10">
                   <Cable className="w-5 h-5 text-muted-foreground/40" />
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-foreground">No iPhones connected via USB</p>
+                    <p className="text-sm font-medium text-foreground">No iPhones connected yet</p>
                     <p className="text-xs text-muted-foreground max-w-xs">
-                      Plug an iPhone into your Mac with a USB cable and it will appear here automatically.
+                      Connect via USB cable or enable Wi-Fi Text Message Forwarding on your iPhone.
                     </p>
                   </div>
                   <UsbGuideButton />
@@ -352,22 +355,60 @@ export default function Settings() {
             return (
               <div className="space-y-1.5">
                 {usbDevices.map((dev: string, i: number) => (
-                  <div key={i} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-secondary/30 border border-border/60 text-sm">
+                  <div key={`usb-${i}`} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-violet-500/5 border border-violet-500/20">
                     <Cable className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                    <span className="font-mono text-xs text-foreground/80">{dev}</span>
-                    <Badge className="ml-auto text-[10px] px-1.5 bg-violet-500/10 text-violet-400 border-violet-500/20">USB</Badge>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground truncate">{dev}</p>
+                      <p className="text-[10px] text-muted-foreground">USB cable</p>
+                    </div>
+                    <Badge className="text-[10px] px-1.5 bg-violet-500/10 text-violet-400 border-violet-500/20">USB</Badge>
+                  </div>
+                ))}
+                {wifiDevices.map((dev: string, i: number) => (
+                  <div key={`wifi-${i}`} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                    <HelpCircle className="w-3.5 h-3.5 text-blue-400 shrink-0" style={{ display: "none" }} />
+                    <Cable className="w-3.5 h-3.5 text-blue-400 shrink-0" style={{ display: "none" }} />
+                    {/* Wifi icon — import already added */}
+                    <svg className="w-3.5 h-3.5 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground truncate">{dev}</p>
+                      <p className="text-[10px] text-muted-foreground">Wi-Fi forwarding</p>
+                    </div>
+                    <Badge className="text-[10px] px-1.5 bg-blue-500/10 text-blue-400 border-blue-500/20">Wi-Fi</Badge>
                   </div>
                 ))}
               </div>
             );
           })()}
-          <div className="rounded-lg border border-border/40 bg-secondary/10 px-4 py-3 space-y-2">
-            <p className="text-xs font-medium text-foreground">Why use USB?</p>
-            <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
-              <li>More stable than Wi-Fi — no dropped connections during bulk sends</li>
-              <li>Faster response time for Text Message Forwarding</li>
-              <li>Works even when your Mac's Wi-Fi is congested</li>
-            </ul>
+          <div className="rounded-lg border border-border/40 bg-secondary/10 px-4 py-3 space-y-2.5">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs font-semibold text-foreground mb-1 flex items-center gap-1.5">
+                  <Cable className="w-3 h-3 text-violet-400" /> USB Cable
+                </p>
+                <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                  <li>Most reliable — no drops</li>
+                  <li>Works without Wi-Fi</li>
+                  <li>Plug & play detection</li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-foreground mb-1 flex items-center gap-1.5">
+                  <HelpCircle className="w-3 h-3 text-blue-400" style={{ display: "none" }} />
+                  <svg className="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+                  </svg>
+                  Wi-Fi Forwarding
+                </p>
+                <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                  <li>No cable needed</li>
+                  <li>Same Wi-Fi required</li>
+                  <li>Setup once per iPhone</li>
+                </ul>
+              </div>
+            </div>
             <UsbGuideButton className="mt-1" />
           </div>
         </Section>
