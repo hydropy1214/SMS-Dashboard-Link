@@ -118,6 +118,8 @@ export default function Compose() {
   const [selectedDeviceKeys, setSelectedDeviceKeys] = useState<Set<DeviceKey>>(new Set());
   const [isSending, setIsSending]       = useState(false);
   const [guideOpen, setGuideOpen]       = useState(false);
+  // Ref guard prevents double-send if handleSend fires twice before React re-render
+  const isSendingRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -134,26 +136,53 @@ export default function Compose() {
     [allAgents],
   );
 
-  // Flat list of all sendable devices (USB iPhones, Wi-Fi iPhones, iMessage accounts)
-  // across all online agents. These are the correct Messages.app service names.
+  // Flat list of all sendable devices across all online agents — deduplicated by key.
+  // Duplicate keys (e.g. two USB iPhones both named "iPhone") would cause the same
+  // phone number to be sent twice when both entries are selected.
   const allDevices = useMemo<DeviceEntry[]>(() => {
+    const seen = new Set<DeviceKey>();
     const list: DeviceEntry[] = [];
     for (const agent of onlineAgents) {
       const usb:  string[] = (agent as any).usbDevices ?? [];
       const wifi: string[] = (agent as any).connectedDevices ?? [];
       const acct: string[] = agent.connectedAccounts ?? [];
       for (const dev of usb) {
-        list.push({ key: `${agent.agentId}::${dev}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "usb" });
+        const key = `${agent.agentId}::${dev}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "usb" });
       }
       for (const dev of wifi) {
-        list.push({ key: `${agent.agentId}::${dev}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "wifi" });
+        const key = `${agent.agentId}::${dev}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: dev, displayName: dev, connectionType: "wifi" });
       }
       for (const a of acct) {
-        list.push({ key: `${agent.agentId}::${a}`, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: a, displayName: a, connectionType: "imessage" });
+        const key = `${agent.agentId}::${a}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ key, agentId: agent.agentId, agentHostname: agent.hostname, fromPhone: a, displayName: a, connectionType: "imessage" });
       }
     }
     return list;
   }, [onlineAgents]);
+
+  // True when iPhones are detected via USB but no SMS forwarding services exist.
+  // This means Text Message Forwarding is likely not enabled on the iPhone.
+  const forwardingNotReady = useMemo(() =>
+    onlineAgents.length > 0 &&
+    onlineAgents.every(a => ((a as any).connectedDevices ?? []).length === 0) &&
+    onlineAgents.some(a => ((a as any).usbDevices ?? []).length > 0),
+    [onlineAgents],
+  );
+
+  // True when the agent is heartbeating but no tunnel URL is configured,
+  // so "Any available" sends would fail 503.
+  const sendUrlMissing = useMemo(() =>
+    macStatus?.connected === true && !macStatus?.url,
+    [macStatus],
+  );
 
   const { unique: recipients, dupes, invalid } = useMemo(() => parseNumbers(rawNumbers), [rawNumbers]);
 
@@ -199,8 +228,16 @@ export default function Compose() {
 
   /* ── send ────────────────────────────────────────────── */
   const handleSend = async () => {
-    if (!canSend || isSending) return;
+    // isSendingRef gives an immediate synchronous guard so rapid double-clicks
+    // can't fire two sends before React re-renders and disables the button.
+    if (!canSend || isSendingRef.current) return;
+    isSendingRef.current = true;
     setIsSending(true);
+
+    const doneSending = () => {
+      isSendingRef.current = false;
+      setIsSending(false);
+    };
 
     const activeDevices = senderMode === "devices" && selectedDeviceKeys.size > 0
       ? allDevices.filter(d => selectedDeviceKeys.has(d.key))
@@ -222,7 +259,7 @@ export default function Compose() {
             setSendProgress({ sent, failed, total });
             setTimeout(() => {
               setSendProgress(null);
-              setIsSending(false);
+              doneSending();
               if (failed === 0)    toast.success(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
               else if (sent === 0) toast.error(`Failed for all ${failed} recipients`);
               else                 toast.warning(`Sent: ${sent} · Failed: ${failed}`);
@@ -233,13 +270,14 @@ export default function Compose() {
           },
           onError: (err: any) => {
             setSendProgress(null);
-            setIsSending(false);
+            doneSending();
             toast.error("Send failed: " + (err?.message ?? "Unknown error"));
           },
         }
       );
     } else {
-      // Multi-device mode — split recipients evenly across selected iPhones, send in parallel
+      // Multi-device mode — split recipients evenly across selected iPhones, send in parallel.
+      // activeDevices is already deduplicated so each chunk goes to a distinct device.
       const chunks = splitRecipients(recipients, activeDevices.length);
       setSendProgress({ sent: 0, failed: 0, total: recipients.length });
 
@@ -265,7 +303,7 @@ export default function Compose() {
 
         setTimeout(() => {
           setSendProgress(null);
-          setIsSending(false);
+          doneSending();
           if (totals.failed === 0)    toast.success(`Sent to ${totals.sent} recipient${totals.sent !== 1 ? "s" : ""} via ${activeDevices.length} iPhones`);
           else if (totals.sent === 0) toast.error(`Failed for all ${totals.failed} recipients`);
           else                         toast.warning(`Sent: ${totals.sent} · Failed: ${totals.failed}`);
@@ -275,7 +313,7 @@ export default function Compose() {
         }, 1200);
       } catch (err: any) {
         setSendProgress(null);
-        setIsSending(false);
+        doneSending();
         toast.error("Send failed: " + (err?.message ?? "Unknown error"));
       }
     }
@@ -346,33 +384,68 @@ export default function Compose() {
             {senderMode === "all" ? (
               /* ── Any-available view ────────────────── */
               <div className="space-y-3">
+
+                {/* No tunnel URL configured — sends will 503 */}
+                {sendUrlMissing && (
+                  <div className="flex items-start gap-3 px-3 py-3 rounded-lg border border-amber-500/25 bg-amber-500/5">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-amber-300">Agent URL not configured</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Your Mac is heartbeating but no tunnel URL is saved, so sends can't reach it.
+                        Paste your Cloudflare tunnel URL in <Link href="/settings" className="underline hover:text-amber-300 transition-colors">Settings → Mac Agent URL</Link>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Forwarding not set up */}
+                {forwardingNotReady && (
+                  <div className="flex items-start gap-3 px-3 py-3 rounded-lg border border-amber-500/25 bg-amber-500/5">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-amber-300">Text Message Forwarding not enabled</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        iPhone detected via USB but no SMS service is available. On your iPhone:
+                        Settings → Messages → Text Message Forwarding → turn on your Mac.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setGuideOpen(true)}
+                      className="shrink-0 text-[10px] px-2.5 py-1 rounded-md border border-amber-500/30 hover:border-amber-400 hover:text-amber-300 text-muted-foreground transition-colors font-medium"
+                    >
+                      Guide
+                    </button>
+                  </div>
+                )}
+
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Dispatch picks the least-loaded online Mac automatically. All {onlineAgents.length} Mac{onlineAgents.length !== 1 ? "s" : ""} and {allDevices.length} device{allDevices.length !== 1 ? "s" : ""} are eligible.
+                  Dispatch picks the least-loaded online Mac automatically.
                 </p>
-                <div className="flex flex-wrap gap-2">
+
+                {/* Per-agent status cards */}
+                <div className="grid gap-1.5">
                   {onlineAgents.map(agent => {
                     const usb:  string[] = (agent as any).usbDevices ?? [];
                     const wifi: string[] = (agent as any).connectedDevices ?? [];
                     const acct: string[] = agent.connectedAccounts ?? [];
+                    const hasUrl = !!(agent as any).macAgentUrl;
                     return (
-                      <div key={agent.agentId} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/30 border border-border text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                        <span className="font-medium text-foreground">{agent.hostname}</span>
-                        {usb.length > 0 && (
-                          <span className="flex items-center gap-0.5 text-violet-400" title={usb.join(", ")}>
-                            <Cable className="w-3 h-3" />{usb.length}
-                          </span>
-                        )}
-                        {wifi.length > 0 && (
-                          <span className="flex items-center gap-0.5 text-blue-400" title={wifi.join(", ")}>
-                            <Wifi className="w-3 h-3" />{wifi.length}
-                          </span>
-                        )}
-                        {acct.length > 0 && (
-                          <span className="flex items-center gap-0.5 text-muted-foreground" title={acct.join(", ")}>
-                            <MessageSquare className="w-3 h-3" />{acct.length}
-                          </span>
-                        )}
+                      <div key={agent.agentId} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-secondary/30 border border-border text-xs">
+                        <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-foreground truncate">{agent.hostname}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {[
+                              usb.length  > 0 ? `${usb.length} USB iPhone${usb.length !== 1 ? "s" : ""}` : null,
+                              wifi.length > 0 ? `${wifi.length} Wi-Fi iPhone${wifi.length !== 1 ? "s" : ""}` : null,
+                              acct.length > 0 ? `${acct.length} iMessage account${acct.length !== 1 ? "s" : ""}` : null,
+                            ].filter(Boolean).join(" · ") || "No SMS devices"}
+                          </p>
+                        </div>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${hasUrl ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
+                          {hasUrl ? "URL ✓" : "No URL"}
+                        </span>
                       </div>
                     );
                   })}
@@ -381,6 +454,26 @@ export default function Compose() {
             ) : (
               /* ── Choose-iPhones view ───────────────── */
               <div className="space-y-3">
+
+                {/* Forwarding not set up — shown even when there are USB devices (old agent reports hardware names) */}
+                {forwardingNotReady && (
+                  <div className="flex items-start gap-3 px-3 py-3 rounded-lg border border-amber-500/25 bg-amber-500/5">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-amber-300">Text Message Forwarding may not be enabled</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        iPhone detected via USB but no confirmed SMS service.
+                        On your iPhone: <span className="text-foreground/80">Settings → Messages → Text Message Forwarding → turn on your Mac.</span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setGuideOpen(true)}
+                      className="shrink-0 text-[10px] px-2.5 py-1 rounded-md border border-amber-500/30 hover:border-amber-400 hover:text-amber-300 text-muted-foreground transition-colors font-medium"
+                    >
+                      Guide
+                    </button>
+                  </div>
+                )}
 
                 {allDevices.length === 0 ? (
                   <div className="flex items-start gap-3 px-4 py-3.5 rounded-lg border border-dashed border-border bg-secondary/10">
@@ -419,7 +512,7 @@ export default function Compose() {
                       </button>
                     </div>
 
-                    {/* Device list — flat across all agents */}
+                    {/* Device list — flat across all agents, already deduplicated */}
                     <div className="grid gap-1.5">
                       {allDevices.map(device => {
                         const sel = selectedDeviceKeys.has(device.key);
@@ -428,7 +521,7 @@ export default function Compose() {
                           wifi:     { icon: <Wifi  className={`w-4 h-4 ${sel ? "text-blue-400"   : "text-muted-foreground"}`} />, badge: "Wi-Fi",   badgeCls: "bg-blue-500/10 text-blue-400 border-blue-500/20",       accentCls: "border-blue-500/40 bg-blue-500/5"   },
                           imessage: { icon: <MessageSquare className={`w-4 h-4 ${sel ? "text-primary" : "text-muted-foreground"}`} />, badge: "iMessage", badgeCls: "bg-primary/10 text-primary border-primary/20",          accentCls: "border-primary/40 bg-primary/5"     },
                         }[device.connectionType];
-                        const sublabels = { usb: "USB cable · SMS via this iPhone", wifi: "Wi-Fi forwarding · SMS via this iPhone", imessage: "iMessage account" };
+                        const sublabel = { usb: "USB cable · SMS via this iPhone", wifi: "Wi-Fi forwarding · SMS via this iPhone", imessage: "iMessage account" }[device.connectionType];
                         return (
                           <button
                             key={device.key}
@@ -451,7 +544,7 @@ export default function Compose() {
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-semibold text-foreground truncate">{device.displayName}</p>
                               <p className="text-[10px] text-muted-foreground mt-0.5">
-                                {sublabels[device.connectionType]}
+                                {sublabel}
                                 {onlineAgents.length > 1 && <span className="opacity-60"> · {device.agentHostname}</span>}
                               </p>
                             </div>
