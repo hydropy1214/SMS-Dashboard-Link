@@ -1,32 +1,33 @@
 import React, { useState, useMemo } from "react";
-import { useSendMessage, useGetMacAgentStatus, getGetMacAgentStatusQueryKey, getGetMessagesQueryKey } from "@workspace/api-client-react";
+import {
+  useSendMessage,
+  useGetMacAgentStatus,
+  getGetMacAgentStatusQueryKey,
+  getGetMessagesQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
-import { Send, X, AlertCircle, CheckCircle2, Settings as SettingsIcon, Info } from "lucide-react";
+import { Send, X, AlertCircle, CheckCircle2, Settings as SettingsIcon, Zap, Users } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
-function parseAndDedupeNumbers(raw: string): { numbers: string[]; dupeCount: number } {
-  const all = raw
-    .split(/[\n,]+/)
-    .map(n => n.trim())
-    .filter(n => n.length > 0);
+/* ─── helpers ──────────────────────────────────────────────── */
+
+function parseNumbers(raw: string): { unique: string[]; dupes: number } {
+  const all = raw.split(/[\n,]+/).map(n => n.trim()).filter(Boolean);
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const n of all) {
-    if (!seen.has(n)) {
-      seen.add(n);
-      unique.push(n);
-    }
+    if (!seen.has(n)) { seen.add(n); unique.push(n); }
   }
-  return { numbers: unique, dupeCount: all.length - unique.length };
+  return { unique, dupes: all.length - unique.length };
 }
+
+/* ─── component ─────────────────────────────────────────────── */
 
 export default function Compose() {
   const [rawNumbers, setRawNumbers] = useState("");
@@ -35,217 +36,218 @@ export default function Compose() {
 
   const sendMessage = useSendMessage();
   const { data: macStatus } = useGetMacAgentStatus({
-    query: {
-      queryKey: getGetMacAgentStatusQueryKey(),
-      refetchInterval: 8000,
-      retry: false,
-    }
+    query: { queryKey: getGetMacAgentStatusQueryKey(), refetchInterval: 8000, retry: false },
   });
 
-  const { numbers: parsedNumbers, dupeCount } = useMemo(
-    () => parseAndDedupeNumbers(rawNumbers),
-    [rawNumbers]
-  );
+  const { unique: recipients, dupes } = useMemo(() => parseNumbers(rawNumbers), [rawNumbers]);
+
+  const isConnected = macStatus?.connected === true;
+  const macKnown = macStatus !== undefined;
+  const canSend = recipients.length > 0 && message.trim().length > 0 && !sendMessage.isPending;
 
   const handleSend = () => {
-    if (parsedNumbers.length === 0) {
-      toast.error("Paste at least one phone number");
-      return;
-    }
-    if (!message.trim()) {
-      toast.error("Message content cannot be empty");
-      return;
-    }
-
+    if (!canSend) return;
     sendMessage.mutate(
-      { data: { phoneNumbers: parsedNumbers, content: message } },
+      { data: { phoneNumbers: recipients, content: message } },
       {
-        onSuccess: (data) => {
+        onSuccess: (data: any[]) => {
           const sent = data.filter((r: any) => r.status === "sent").length;
           const failed = data.filter((r: any) => r.status === "failed").length;
-          if (failed === 0) {
-            toast.success(`Sent to ${sent} recipient${sent !== 1 ? 's' : ''}`);
-          } else if (sent === 0) {
-            toast.error(`Failed to send to all ${failed} recipient${failed !== 1 ? 's' : ''}`);
-          } else {
-            toast.warning(`Sent to ${sent}, failed for ${failed}`);
-          }
+          if (failed === 0)       toast.success(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
+          else if (sent === 0)    toast.error(`Failed for all ${failed} recipients`);
+          else                    toast.warning(`Sent: ${sent} · Failed: ${failed}`);
           setRawNumbers("");
           setMessage("");
           queryClient.invalidateQueries({ queryKey: getGetMessagesQueryKey() });
         },
-        onError: (err: any) => {
-          toast.error("Send error: " + (err?.error || "Unknown error"));
-        }
+        onError: (err: any) => toast.error("Send failed: " + (err?.error ?? "Unknown error")),
       }
     );
   };
 
-  const removeNumber = (indexToRemove: number) => {
-    const updated = parsedNumbers.filter((_, idx) => indexToRemove !== idx);
+  const removeRecipient = (idx: number) => {
+    const updated = recipients.filter((_, i) => i !== idx);
     setRawNumbers(updated.join("\n"));
   };
 
-  const isConnected = macStatus?.connected === true;
-  const macStatusKnown = macStatus !== undefined;
-
   return (
-    <div className="space-y-5 pb-10">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-3">
-          <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(0,195,255,0.8)] animate-pulse" />
-          COMPOSE
-        </h1>
-        <p className="text-muted-foreground font-mono text-sm mt-1">Send iMessages from your Mac</p>
+    <div className="space-y-6 pb-12">
+
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1">
+            <div className="w-2 h-2 rounded-full bg-primary animate-pulse dispatch-glow-sm" />
+            <h1 className="text-xl font-semibold text-foreground tracking-tight">Compose Message</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">Paste phone numbers, write your message, send.</p>
+        </div>
+        {macKnown && (
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium ${
+            isConnected
+              ? "bg-emerald-500/8 border-emerald-500/20 text-emerald-400"
+              : "bg-destructive/8 border-destructive/20 text-destructive"
+          }`}>
+            {isConnected
+              ? <><CheckCircle2 className="w-3 h-3" /> Mac Connected</>
+              : <><AlertCircle className="w-3 h-3" /> Mac Offline</>
+            }
+          </div>
+        )}
       </div>
 
-      {/* Mac offline banner */}
-      {macStatusKnown && !isConnected && (
-        <Alert variant="destructive" className="border-destructive/50 bg-destructive/10 text-destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle className="font-mono uppercase tracking-wider text-sm font-bold">Mac Agent Offline</AlertTitle>
-          <AlertDescription className="font-mono text-xs mt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <span>Mac Agent not running — messages will fail. Go to Setup to connect your Mac.</span>
+      {/* Offline banner */}
+      <AnimatePresence>
+        {macKnown && !isConnected && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            className="flex items-start gap-3 px-4 py-3.5 rounded-xl border border-destructive/25 bg-destructive/8"
+          >
+            <AlertCircle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-destructive">Mac Agent not connected</p>
+              <p className="text-xs text-destructive/70 mt-0.5">
+                Messages will fail until you connect your Mac. Follow the setup guide to get started.
+              </p>
+            </div>
             <div className="flex gap-2 shrink-0">
               <Link href="/setup">
-                <Button size="sm" variant="destructive" className="h-7 text-xs font-mono uppercase tracking-widest">
+                <Button size="sm" variant="destructive" className="h-7 text-xs font-medium">
                   Setup Guide
                 </Button>
               </Link>
               <Link href="/settings">
-                <Button size="sm" variant="outline" className="h-7 text-xs font-mono uppercase tracking-widest border-destructive/40 text-destructive hover:bg-destructive/10">
-                  <SettingsIcon className="w-3 h-3 mr-1" /> Settings
+                <Button size="sm" variant="outline" className="h-7 text-xs font-medium border-destructive/30 text-destructive/80 hover:bg-destructive/10 hover:text-destructive">
+                  <SettingsIcon className="w-3 h-3 mr-1" />Settings
                 </Button>
               </Link>
             </div>
-          </AlertDescription>
-        </Alert>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {macStatusKnown && isConnected && (
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#34c759]/10 border border-[#34c759]/30 text-[#34c759] text-xs font-mono uppercase w-max">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          Mac Agent Connected
-          {macStatus?.latencyMs && <span className="opacity-60 normal-case ml-1">· {macStatus.latencyMs}ms</span>}
-        </div>
-      )}
+      {/* Main compose card */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-lg">
+        {/* Accent top line */}
+        <div className="h-[2px] bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
 
-      <Card className="border-primary/20 shadow-[0_4px_24px_rgba(0,0,0,0.4)] bg-card overflow-hidden">
-        <div className="h-1 w-full bg-gradient-to-r from-primary/10 via-primary/50 to-primary/10" />
-        <CardContent className="p-6 space-y-7">
+        <div className="p-6 space-y-6">
 
-          {/* Phone numbers */}
-          <div className="space-y-3">
+          {/* Recipients */}
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="recipients" className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
-                Phone Numbers
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+                Recipients
               </Label>
-              {parsedNumbers.length > 0 && (
-                <span className="text-xs font-mono text-muted-foreground">
-                  {parsedNumbers.length} recipient{parsedNumbers.length !== 1 ? 's' : ''}
-                  {dupeCount > 0 && (
-                    <span className="ml-2 text-amber-500">· {dupeCount} duplicate{dupeCount !== 1 ? 's' : ''} removed</span>
+              {recipients.length > 0 && (
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  {dupes > 0 && (
+                    <span className="text-amber-500 font-medium">
+                      {dupes} duplicate{dupes !== 1 ? "s" : ""} removed
+                    </span>
                   )}
-                </span>
+                  <span className="flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    {recipients.length} recipient{recipients.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
               )}
             </div>
 
             <Textarea
-              id="recipients"
-              placeholder={`Paste phone numbers here — one per line or comma-separated:\n+1 555 000 0001\n+1 555 000 0002, +1 555 000 0003`}
-              className="font-mono text-sm min-h-[110px] resize-y bg-input/50 focus-visible:bg-input border-border focus-visible:ring-primary/50 transition-colors"
+              placeholder={`Paste phone numbers — one per line or comma-separated\n\n+1 555 000 0001\n+1 555 000 0002, +1 555 000 0003`}
+              className="font-mono text-sm min-h-[110px] resize-y bg-input/40 border-border focus-visible:border-primary/40 focus-visible:ring-primary/20 focus-visible:bg-input/60 transition-all placeholder:text-muted-foreground/40"
               value={rawNumbers}
-              onChange={(e) => setRawNumbers(e.target.value)}
+              onChange={e => setRawNumbers(e.target.value)}
             />
 
-            {/* Parsed number chips */}
-            {parsedNumbers.length > 0 && (
-              <div className="min-h-[36px] bg-secondary/30 rounded-md border border-border p-2.5">
-                <div className="flex flex-wrap gap-1.5">
-                  <AnimatePresence>
-                    {parsedNumbers.map((num, idx) => (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.85 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.85 }}
-                        transition={{ duration: 0.12 }}
-                        key={`${num}-${idx}`}
-                      >
-                        <Badge
-                          variant="secondary"
-                          className="font-mono text-xs pl-2 pr-1 py-1 gap-1 border-primary/20 bg-primary/10 text-primary-foreground hover:bg-primary/20 flex items-center"
+            {/* Parsed chips */}
+            <AnimatePresence>
+              {recipients.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex flex-wrap gap-1.5 p-3 rounded-lg bg-secondary/30 border border-border min-h-[40px]">
+                    <AnimatePresence>
+                      {recipients.map((num, idx) => (
+                        <motion.span
+                          key={`${num}-${idx}`}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          transition={{ duration: 0.12 }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary/10 border border-primary/20 text-xs font-mono text-foreground/90 group"
                         >
                           {num}
                           <button
-                            onClick={() => removeNumber(idx)}
-                            className="ml-1 p-0.5 rounded hover:bg-primary/20 text-primary/70 hover:text-primary transition-colors"
+                            onClick={() => removeRecipient(idx)}
+                            className="ml-0.5 rounded p-0.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                           >
                             <X className="w-2.5 h-2.5" />
                           </button>
-                        </Badge>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            )}
-
-            {parsedNumbers.length === 0 && rawNumbers.length === 0 && (
-              <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground/50">
-                <Info className="w-3 h-3" />
-                Duplicates are automatically removed when you paste
-              </div>
-            )}
+                        </motion.span>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Message */}
-          <div className="space-y-3">
-            <Label htmlFor="message" className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
-              Message
-            </Label>
-            <div className="relative">
-              <Textarea
-                id="message"
-                placeholder="Type your message here..."
-                className="min-h-[140px] resize-y bg-input/50 focus-visible:bg-input border-border focus-visible:ring-primary/50 transition-colors text-base pr-14"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-              />
-              <div className="absolute bottom-3 right-3 text-xs font-mono text-muted-foreground/50">
-                {message.length}
-              </div>
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+                Message
+              </Label>
+              <span className={`text-xs font-mono transition-colors ${
+                message.length > 1400 ? "text-amber-500" : "text-muted-foreground/50"
+              }`}>
+                {message.length} chars
+              </span>
             </div>
+            <Textarea
+              placeholder="Write your message here…"
+              className="min-h-[150px] resize-y bg-input/40 border-border focus-visible:border-primary/40 focus-visible:ring-primary/20 focus-visible:bg-input/60 transition-all text-[15px] leading-relaxed"
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+            />
           </div>
-        </CardContent>
+        </div>
 
-        <CardFooter className="bg-secondary/20 p-5 border-t border-border flex justify-between items-center">
-          <div className="text-xs font-mono text-muted-foreground">
+        {/* Footer */}
+        <div className="px-6 py-4 bg-secondary/20 border-t border-border flex items-center justify-between gap-4">
+          <div className="text-sm text-muted-foreground">
             {sendMessage.isPending ? (
-              <span className="text-primary flex items-center gap-2">
+              <span className="flex items-center gap-2 text-primary">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                Sending to {parsedNumbers.length} recipient{parsedNumbers.length !== 1 ? 's' : ''}...
+                Sending to {recipients.length} recipient{recipients.length !== 1 ? "s" : ""}…
+              </span>
+            ) : recipients.length > 0 && message.trim() ? (
+              <span className="flex items-center gap-2">
+                <Zap className="w-3.5 h-3.5 text-primary" />
+                Ready — {recipients.length} recipient{recipients.length !== 1 ? "s" : ""}
               </span>
             ) : (
-              <span>
-                {parsedNumbers.length > 0 && message.trim()
-                  ? `Ready to send to ${parsedNumbers.length} recipient${parsedNumbers.length !== 1 ? 's' : ''}`
-                  : 'Waiting for input'}
-              </span>
+              <span className="text-muted-foreground/50">Fill in recipients and message to send</span>
             )}
           </div>
+
           <Button
             onClick={handleSend}
-            disabled={parsedNumbers.length === 0 || !message.trim() || sendMessage.isPending}
-            className="w-36 font-mono font-bold tracking-widest shadow-[0_0_15px_rgba(0,195,255,0.3)] hover:shadow-[0_0_25px_rgba(0,195,255,0.5)] transition-all"
+            disabled={!canSend}
+            size="lg"
+            className="gap-2 font-semibold px-6 dispatch-glow disabled:opacity-40 disabled:shadow-none"
           >
-            {sendMessage.isPending ? (
-              "SENDING..."
-            ) : (
-              <>SEND <Send className="w-4 h-4 ml-2" /></>
-            )}
+            {sendMessage.isPending ? "Sending…" : <>Send <Send className="w-4 h-4" /></>}
           </Button>
-        </CardFooter>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

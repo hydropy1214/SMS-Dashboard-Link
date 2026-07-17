@@ -37,22 +37,15 @@ router.get("/mac-agent/status", async (req, res) => {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${agentUrl}/status`, {
-        signal: controller.signal,
-      });
+      const response = await fetch(`${agentUrl}/status`, { signal: controller.signal });
       clearTimeout(timeout);
-
       const latencyMs = Date.now() - start;
 
       if (!response.ok) {
         res.json({
-          connected: false,
-          url: agentUrl,
-          platform: null,
-          isMac: null,
-          messagesAppAvailable: null,
-          appleScriptAvailable: null,
+          connected: false, url: agentUrl,
+          platform: null, isMac: null,
+          messagesAppAvailable: null, appleScriptAvailable: null,
           error: `Mac Agent responded with ${response.status}`,
           latencyMs,
         });
@@ -66,26 +59,20 @@ router.get("/mac-agent/status", async (req, res) => {
         appleScriptAvailable?: boolean;
       };
       res.json({
-        connected: true,
-        url: agentUrl,
+        connected: true, url: agentUrl,
         platform: data.platform ?? null,
         isMac: data.isMac ?? null,
         messagesAppAvailable: data.messagesAppAvailable ?? null,
         appleScriptAvailable: data.appleScriptAvailable ?? null,
-        error: null,
-        latencyMs,
+        error: null, latencyMs,
       });
     } catch (fetchErr: unknown) {
-      const errMsg =
-        fetchErr instanceof Error ? fetchErr.message : "Connection failed";
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : "Connection failed";
       const isTimeout = errMsg.includes("abort");
       res.json({
-        connected: false,
-        url: agentUrl,
-        platform: null,
-        isMac: null,
-        messagesAppAvailable: null,
-        appleScriptAvailable: null,
+        connected: false, url: agentUrl,
+        platform: null, isMac: null,
+        messagesAppAvailable: null, appleScriptAvailable: null,
         error: isTimeout
           ? "Connection timed out. Is the Mac Agent running and the tunnel active?"
           : `Cannot reach Mac Agent: ${errMsg}`,
@@ -98,56 +85,90 @@ router.get("/mac-agent/status", async (req, res) => {
   }
 });
 
-// GET /api/mac-agent/download
+// GET /api/mac-agent/accounts — lists messaging accounts available in Messages.app
+router.get("/mac-agent/accounts", async (req, res) => {
+  const agentUrl = await getMacAgentUrl();
+  if (!agentUrl) {
+    res.json({ accounts: [], error: "Mac Agent not configured" });
+    return;
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    const r = await fetch(`${agentUrl}/accounts`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!r.ok) {
+      res.json({ accounts: [], error: `Agent error ${r.status}` });
+      return;
+    }
+    const data = (await r.json()) as { accounts: string[]; error?: string };
+    res.json(data);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to reach Mac Agent";
+    res.json({ accounts: [], error: msg });
+  }
+});
+
+// GET /api/mac-agent/download — serves the Mac Agent installer script
 router.get("/mac-agent/download", (_req, res) => {
   const script = `#!/bin/bash
 # ============================================================
-#  iMessage Dashboard — Mac Agent Setup Script
-#  Run this on your Mac to enable message sending from the
-#  dashboard. Requires macOS + Node.js 18+.
+#  Dispatch — Mac Agent Setup Script v2.0
+#
+#  Runs on your Mac to enable iMessage/SMS sending from the
+#  Dispatch dashboard. Requires macOS + Node.js 18+.
+#
+#  Usage:
+#    chmod +x mac-agent-setup.sh && ./mac-agent-setup.sh
+#
+#  After starting, expose the agent with a tunnel:
+#    Cloudflare: npx cloudflared tunnel --url http://localhost:3001
+#    ngrok:      ngrok http 3001
+#
+#  Then paste the HTTPS tunnel URL in Dispatch → Settings.
 # ============================================================
 
 set -e
 
-AGENT_DIR="$HOME/.imessage-dashboard-agent"
+AGENT_DIR="\$HOME/.dispatch-agent"
 PORT=\${MAC_AGENT_PORT:-3001}
 
 echo ""
-echo "  iMessage Dashboard — Mac Agent Installer"
-echo "  =========================================="
+echo "  Dispatch Mac Agent — Installer"
+echo "  ================================"
 echo ""
 
-# Check macOS
+# Require macOS
 if [[ "\$(uname)" != "Darwin" ]]; then
   echo "  ERROR: This script must be run on macOS."
   exit 1
 fi
 
-# Check Node.js
+# Require Node.js
 if ! command -v node &>/dev/null; then
   echo "  ERROR: Node.js not found."
-  echo "  Install it from https://nodejs.org (LTS version recommended)"
+  echo "  Install it from https://nodejs.org (LTS recommended)"
   exit 1
 fi
 
-NODE_VERSION=\$(node -e "process.stdout.write(process.version)")
-echo "  Node.js found: \$NODE_VERSION"
+NODE_VER=\$(node -e "process.stdout.write(process.version)")
+echo "  Node.js: \$NODE_VER  ✓"
+echo "  Install path: \$AGENT_DIR"
+echo ""
 
-# Create agent directory
 mkdir -p "\$AGENT_DIR"
 cd "\$AGENT_DIR"
 
-# Write package.json
 cat > package.json <<'PKGJSON'
 {
-  "name": "imessage-dashboard-agent",
-  "version": "1.0.0",
+  "name": "dispatch-mac-agent",
+  "version": "2.0.0",
   "type": "module",
+  "description": "Dispatch Mac Agent — bridges the dashboard to Messages.app",
   "main": "server.js"
 }
 PKGJSON
 
-# Write the agent server
 cat > server.js <<'SERVEREOF'
 import { createServer } from "http";
 import { exec } from "child_process";
@@ -156,6 +177,7 @@ import os from "os";
 
 const execAsync = promisify(exec);
 const PORT = Number(process.env.MAC_AGENT_PORT || 3001);
+const AGENT_VERSION = "2.0.0";
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -170,12 +192,8 @@ function json(res, status, data) {
 }
 
 async function checkAppleScript() {
-  try {
-    await execAsync("which osascript", { timeout: 3000 });
-    return true;
-  } catch {
-    return false;
-  }
+  try { await execAsync("which osascript", { timeout: 3000 }); return true; }
+  catch { return false; }
 }
 
 async function checkMessagesRunning() {
@@ -185,9 +203,20 @@ async function checkMessagesRunning() {
       { timeout: 5000 }
     );
     return stdout.trim() === "true";
-  } catch {
-    return false;
-  }
+  } catch { return false; }
+}
+
+async function getMessagesAccounts() {
+  try {
+    // Get account names from Messages.app
+    const { stdout } = await execAsync(
+      \`osascript -e 'tell application "Messages" to get name of every account'\`,
+      { timeout: 8000 }
+    );
+    const raw = stdout.trim();
+    if (!raw) return [];
+    return raw.split(", ").map(s => s.trim()).filter(Boolean);
+  } catch { return []; }
 }
 
 async function sendIMessage(phoneNumber, message) {
@@ -201,9 +230,7 @@ async function sendIMessage(phoneNumber, message) {
     end tell
   \`;
   try {
-    await execAsync(\`osascript -e '\${script.replace(/'/g, "'\\"'\\"'")}'\`, {
-      timeout: 15000,
-    });
+    await execAsync(\`osascript -e '\${script.replace(/'/g, "'\\"'\\"'")}'\`, { timeout: 15000 });
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -211,16 +238,11 @@ async function sendIMessage(phoneNumber, message) {
 }
 
 const server = createServer(async (req, res) => {
-  if (req.method === "OPTIONS") {
-    cors(res);
-    res.writeHead(204);
-    res.end();
-    return;
-  }
+  if (req.method === "OPTIONS") { cors(res); res.writeHead(204); res.end(); return; }
 
   const url = new URL(req.url, \`http://localhost:\${PORT}\`);
 
-  // GET /status — health + system check
+  // GET /status
   if (req.method === "GET" && url.pathname === "/status") {
     const platform = os.platform();
     const isMac = platform === "darwin";
@@ -229,29 +251,31 @@ const server = createServer(async (req, res) => {
       isMac ? checkMessagesRunning() : Promise.resolve(false),
     ]);
     return json(res, 200, {
-      platform,
-      isMac,
-      appleScriptAvailable,
-      messagesAppAvailable,
-      agentVersion: "1.0.0",
+      platform, isMac, appleScriptAvailable, messagesAppAvailable,
+      agentVersion: AGENT_VERSION, hostname: os.hostname(),
     });
   }
 
-  // POST /send — send a message
+  // GET /accounts — list all Messages.app accounts (iMessage + SMS via forwarding)
+  if (req.method === "GET" && url.pathname === "/accounts") {
+    const hasAppleScript = await checkAppleScript();
+    if (!hasAppleScript) return json(res, 200, { accounts: [], error: "AppleScript not available" });
+    const accounts = await getMessagesAccounts();
+    return json(res, 200, { accounts });
+  }
+
+  // POST /send
   if (req.method === "POST" && url.pathname === "/send") {
     let body = "";
-    req.on("data", (chunk) => (body += chunk));
+    req.on("data", chunk => (body += chunk));
     req.on("end", async () => {
       let parsed;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        return json(res, 400, { error: "Invalid JSON" });
-      }
+      try { parsed = JSON.parse(body); }
+      catch { return json(res, 400, { error: "Invalid JSON" }); }
 
       const { phoneNumbers, content } = parsed;
       if (!Array.isArray(phoneNumbers) || !content) {
-        return json(res, 400, { error: "phoneNumbers and content required" });
+        return json(res, 400, { error: "phoneNumbers (array) and content (string) are required" });
       }
 
       const results = [];
@@ -268,42 +292,42 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
+  const line = "─".repeat(52);
   console.log("");
-  console.log("  Mac Agent running on port " + PORT);
-  console.log("  Local URL: http://localhost:" + PORT);
+  console.log("  ╭" + line + "╮");
+  console.log("  │  Dispatch Mac Agent v" + AGENT_VERSION + " — running on port " + PORT + "       │");
+  console.log("  ╰" + line + "╯");
   console.log("");
-  console.log("  Next step: expose this to the internet using a tunnel.");
-  console.log("  Option A — Cloudflare (free, no account):");
-  console.log("    npx cloudflared tunnel --url http://localhost:" + PORT);
+  console.log("  Local:  http://localhost:" + PORT);
+  console.log("  Status: http://localhost:" + PORT + "/status");
   console.log("");
-  console.log("  Option B — ngrok:");
-  console.log("    ngrok http " + PORT);
+  console.log("  Next: open a NEW Terminal and start a tunnel:");
   console.log("");
-  console.log("  Copy the HTTPS tunnel URL and paste it into the dashboard");
-  console.log("  Settings page under Mac Agent URL.");
+  console.log("    Cloudflare (free, no account):");
+  console.log("      npx cloudflared tunnel --url http://localhost:" + PORT);
+  console.log("");
+  console.log("    ngrok:");
+  console.log("      ngrok http " + PORT);
+  console.log("");
+  console.log("  Paste the HTTPS URL in Dispatch → Settings → Mac Agent URL");
+  console.log("  Keep this window open while using Dispatch.");
   console.log("  Press Ctrl+C to stop.");
   console.log("");
 });
 
 process.on("SIGINT", () => {
-  console.log("\\n  Mac Agent stopped.");
+  console.log("\\n  Dispatch Mac Agent stopped.\\n");
   process.exit(0);
 });
 SERVEREOF
 
-echo ""
-echo "  Mac Agent installed at: \$AGENT_DIR"
-echo ""
-echo "  Starting Mac Agent on port \$PORT..."
+echo "  Agent installed. Starting now..."
 echo ""
 
 node "\$AGENT_DIR/server.js"
 `;
 
-  res.setHeader(
-    "Content-Disposition",
-    'attachment; filename="mac-agent-setup.sh"',
-  );
+  res.setHeader("Content-Disposition", 'attachment; filename="mac-agent-setup.sh"');
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.send(script);
 });
