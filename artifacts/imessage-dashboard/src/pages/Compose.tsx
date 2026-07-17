@@ -12,8 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Send, X, AlertCircle, CheckCircle2, Settings as SettingsIcon,
-  Zap, Users, Upload, FileText, Loader2, XCircle, Clock, Monitor, ChevronDown, Cable, MessageSquare, Smartphone,
+  Zap, Users, Upload, FileText, Loader2, XCircle, Clock, Monitor, ChevronDown, Cable, MessageSquare, Smartphone, HelpCircle,
 } from "lucide-react";
+import { UsbGuideDialog } from "@/components/UsbGuideDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,

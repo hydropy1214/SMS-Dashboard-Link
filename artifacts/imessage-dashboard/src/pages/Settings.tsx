@@ -16,9 +16,10 @@ import {
   Settings as SettingsIcon, Wifi, WifiOff, Save, RefreshCw,
   Loader2, CheckCircle2, AlertCircle, Clock, Monitor, Zap,
   MessageSquare, Smartphone, Download, Link2, Activity,
-  ChevronRight, Cable,
+  ChevronRight, Cable, HelpCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { UsbGuideButton } from "@/components/UsbGuideDialog";
 import { formatDistanceToNow } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
@@ -336,12 +337,15 @@ export default function Settings() {
             const usbDevices: string[] = (onlineAgents[0] as any)?.usbDevices ?? [];
             if (usbDevices.length === 0) {
               return (
-                <div className="flex flex-col items-center justify-center py-6 text-center space-y-1.5 rounded-lg border border-border/50 bg-secondary/10">
+                <div className="flex flex-col items-center justify-center py-6 text-center space-y-3 rounded-lg border border-border/50 bg-secondary/10">
                   <Cable className="w-5 h-5 text-muted-foreground/40" />
-                  <p className="text-sm font-medium text-foreground">No iPhones connected via USB</p>
-                  <p className="text-xs text-muted-foreground max-w-xs">
-                    Plug an iPhone into your Mac with a USB cable and it will appear here automatically.
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">No iPhones connected via USB</p>
+                    <p className="text-xs text-muted-foreground max-w-xs">
+                      Plug an iPhone into your Mac with a USB cable and it will appear here automatically.
+                    </p>
+                  </div>
+                  <UsbGuideButton />
                 </div>
               );
             }
@@ -357,13 +361,14 @@ export default function Settings() {
               </div>
             );
           })()}
-          <div className="rounded-lg border border-border/40 bg-secondary/10 px-4 py-3 space-y-1">
+          <div className="rounded-lg border border-border/40 bg-secondary/10 px-4 py-3 space-y-2">
             <p className="text-xs font-medium text-foreground">Why use USB?</p>
             <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
               <li>More stable than Wi-Fi — no dropped connections during bulk sends</li>
               <li>Faster response time for Text Message Forwarding</li>
               <li>Works even when your Mac's Wi-Fi is congested</li>
             </ul>
+            <UsbGuideButton className="mt-1" />
           </div>
         </Section>
       )}
