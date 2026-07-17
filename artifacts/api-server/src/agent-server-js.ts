@@ -128,14 +128,27 @@ async function runAppleScript(script, timeout) {
   await execAsync("osascript -e '" + escaped + "'", { timeout });
 }
 
-async function sendMessage(phoneNumber, message) {
+async function sendMessage(phoneNumber, message, fromPhone) {
   // Sanitise inputs
   const safePhone = phoneNumber.replace(/['"\\]/g, "").trim();
   // Escape backslashes and double-quotes for AppleScript string embedding
   const safeMsg = message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const start = Date.now();
 
-  const attempts = [
+  // Build attempt list — when a specific iPhone/account is requested, try it first
+  const attempts = [];
+
+  if (fromPhone) {
+    const safeFrom = fromPhone.replace(/['"\\]/g, "").trim();
+    // Try sending via the named service (matches iPhone name or iMessage account name)
+    attempts.push({
+      label: "USB/" + safeFrom,
+      script: "tell application \"Messages\"\nset s to service named \"" + safeFrom + "\"\nset b to buddy \"" + safePhone + "\" of s\nsend \"" + safeMsg + "\" to b\nend tell",
+    });
+  }
+
+  // Always add generic fallbacks
+  attempts.push(
     {
       label: "iMessage",
       script: "tell application \"Messages\"\nset s to 1st service whose service type = iMessage\nset b to buddy \"" + safePhone + "\" of s\nsend \"" + safeMsg + "\" to b\nend tell",
@@ -148,7 +161,7 @@ async function sendMessage(phoneNumber, message) {
       label: "auto",
       script: "tell application \"Messages\"\nsend \"" + safeMsg + "\" to buddy \"" + safePhone + "\"\nend tell",
     },
-  ];
+  );
 
   let lastError = "Unknown error";
   for (const { label, script } of attempts) {
@@ -280,13 +293,13 @@ const server = createServer(async (req, res) => {
     let parsed;
     try { parsed = await readBody(req); }
     catch { return jsonResp(res, 400, { error: "Invalid JSON body" }); }
-    const { phoneNumbers, content } = parsed;
+    const { phoneNumbers, content, fromPhone } = parsed;
     if (!Array.isArray(phoneNumbers) || typeof content !== "string" || !content) {
       return jsonResp(res, 400, { error: "phoneNumbers (string[]) and content (string) are required" });
     }
     const results = [];
     for (const phone of phoneNumbers) {
-      const result = await sendMessage(String(phone), content);
+      const result = await sendMessage(String(phone), content, fromPhone || null);
       results.push({ phoneNumber: phone, ...result });
     }
     return jsonResp(res, 200, results);

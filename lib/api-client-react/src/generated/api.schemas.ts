@@ -84,6 +84,8 @@ export interface MessageInput {
   content: string;
   /** Route to a specific agent by agentId. If omitted the least-loaded online agent is chosen. */
   agentId?: string;
+  /** Send from a specific iPhone or iMessage account (service name in Messages.app). */
+  fromPhone?: string;
 }
 
 export interface SendResult {

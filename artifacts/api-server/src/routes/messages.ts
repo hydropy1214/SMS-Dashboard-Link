@@ -12,6 +12,8 @@ const sendMessageInputSchema = z.object({
   content: z.string().min(1).max(10000),
   /** Route to a specific agent. If omitted the least-loaded online agent is chosen. */
   agentId: z.string().optional(),
+  /** Send from a specific iPhone or iMessage account (service name in Messages.app). */
+  fromPhone: z.string().optional(),
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -151,7 +153,7 @@ router.post("/messages/send", async (req, res) => {
     return;
   }
 
-  const { phoneNumbers, content, agentId: requestedAgentId } = parsed.data;
+  const { phoneNumbers, content, agentId: requestedAgentId, fromPhone } = parsed.data;
 
   // Resolve which agent to use and its URL
   const OFFLINE_THRESHOLD_MS = 90_000;
@@ -218,7 +220,7 @@ router.post("/messages/send", async (req, res) => {
     const agentResponse = await fetch(`${agentUrl}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phoneNumbers, content }),
+      body: JSON.stringify({ phoneNumbers, content, ...(fromPhone ? { fromPhone } : {}) }),
       signal: controller.signal,
     });
     clearTimeout(timeout);

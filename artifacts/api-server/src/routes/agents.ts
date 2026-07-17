@@ -468,17 +468,31 @@ async function runAppleScript(script) {
   return stdout.trim();
 }
 
-async function sendViaMessages(phoneNumber, content) {
+async function sendViaMessages(phoneNumber, content, fromPhone) {
   const safePhone = sanitiseForAppleScript(phoneNumber);
   const safeContent = sanitiseForAppleScript(content);
-  const script = \`
-    tell application "Messages"
-      set targetService to 1st service whose service type = iMessage
-      set targetBuddy to buddy "\${safePhone}" of targetService
-      send "\${safeContent}" to targetBuddy
-    end tell
-  \`;
-  await runAppleScript(script);
+
+  // Attempt list — when fromPhone is set, try that named service first (USB iPhone or specific account)
+  const attempts = [];
+  if (fromPhone) {
+    const safeFrom = sanitiseForAppleScript(fromPhone);
+    attempts.push({
+      label: "USB/" + safeFrom,
+      script: \`tell application "Messages"\\nset s to service named "\${safeFrom}"\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\`,
+    });
+  }
+  attempts.push(
+    { label: "iMessage", script: \`tell application "Messages"\\nset s to 1st service whose service type = iMessage\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\` },
+    { label: "SMS",      script: \`tell application "Messages"\\nset s to 1st service whose service type = SMS\\nset b to buddy "\${safePhone}" of s\\nsend "\${safeContent}" to b\\nend tell\` },
+    { label: "auto",     script: \`tell application "Messages"\\nsend "\${safeContent}" to buddy "\${safePhone}"\\nend tell\` },
+  );
+
+  let lastErr = "Unknown error";
+  for (const { label, script } of attempts) {
+    try { await runAppleScript(script); return { method: label }; }
+    catch (e) { lastErr = e.message || "Unknown error"; }
+  }
+  throw new Error(lastErr);
 }
 
 async function getMessagesAccounts() {
@@ -701,7 +715,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/send") {
       const body = await readBody(req);
-      const { phoneNumbers, content } = body;
+      const { phoneNumbers, content, fromPhone } = body;
 
       if (!Array.isArray(phoneNumbers) || !phoneNumbers.length || typeof content !== "string" || !content.trim()) {
         return json(res, 400, { error: "phoneNumbers (array) and content (string) are required" });
@@ -715,7 +729,7 @@ const server = createServer(async (req, res) => {
         }
         const t0 = Date.now();
         try {
-          await sendViaMessages(phoneNumber.trim(), content);
+          await sendViaMessages(phoneNumber.trim(), content, fromPhone || null);
           results.push({ phoneNumber, success: true, durationMs: Date.now() - t0 });
           log("info", "send", \`Sent to \${phoneNumber}\`);
         } catch (err) {

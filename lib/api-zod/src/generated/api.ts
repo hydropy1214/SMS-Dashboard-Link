@@ -91,7 +91,9 @@ export const GetMessagesResponse = zod.object({
 
 export const SendMessageBody = zod.object({
   "phoneNumbers": zod.array(zod.string()).min(1),
-  "content": zod.string().min(1)
+  "content": zod.string().min(1),
+  "agentId": zod.string().optional(),
+  "fromPhone": zod.string().optional()
 })
 
 export const SendMessageResponse = zod.object({

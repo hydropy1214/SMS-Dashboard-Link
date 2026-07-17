@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Send, X, AlertCircle, CheckCircle2, Settings as SettingsIcon,
-  Zap, Users, Upload, FileText, Loader2, XCircle, Clock, Monitor, ChevronDown,
+  Zap, Users, Upload, FileText, Loader2, XCircle, Clock, Monitor, ChevronDown, Cable, MessageSquare, Smartphone,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -84,6 +84,7 @@ export default function Compose() {
   const [showInvalid, setShowInvalid] = useState(false);
   const [sendProgress, setSendProgress] = useState<SendProgress | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedFromPhone, setSelectedFromPhone] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -146,7 +147,7 @@ export default function Compose() {
     setSendProgress({ sent: 0, failed: 0, total: recipients.length });
 
     sendMessage.mutate(
-      { data: { phoneNumbers: recipients, content: message, ...(selectedAgent ? { agentId: selectedAgent.agentId } : {}) } },
+      { data: { phoneNumbers: recipients, content: message, ...(selectedAgent ? { agentId: selectedAgent.agentId } : {}), ...(selectedFromPhone ? { fromPhone: selectedFromPhone } : {}) } },
       {
         onSuccess: (data: any) => {
           const { sent = 0, failed = 0, total = 0, results = [] } = data ?? {};
@@ -242,6 +243,76 @@ export default function Compose() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+
+          {/* iPhone / account sender picker */}
+          {onlineAgents.length >= 1 && (() => {
+            const sourceAgent = selectedAgent ?? onlineAgents[0];
+            const usbDevices: string[] = (sourceAgent as any)?.usbDevices ?? [];
+            const accounts: string[] = sourceAgent?.connectedAccounts ?? [];
+            const allSenders = [
+              ...usbDevices.map(d => ({ label: d, kind: "usb" as const })),
+              ...accounts.map(a => ({ label: a, kind: "imessage" as const })),
+            ];
+            if (allSenders.length === 0) return null;
+            return (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-card text-xs font-medium text-muted-foreground hover:border-violet-400/40 hover:text-foreground transition-colors">
+                    {selectedFromPhone
+                      ? usbDevices.includes(selectedFromPhone)
+                        ? <Cable className="w-3 h-3 text-violet-400" />
+                        : <MessageSquare className="w-3 h-3 text-blue-400" />
+                      : <Smartphone className="w-3 h-3" />}
+                    <span className="max-w-[130px] truncate">
+                      {selectedFromPhone ?? "Auto sender"}
+                    </span>
+                    <ChevronDown className="w-3 h-3 opacity-60" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Send from iPhone / account…</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setSelectedFromPhone(null)} className="gap-2 cursor-pointer">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium">Auto (Messages.app picks)</p>
+                      <p className="text-[10px] text-muted-foreground">Tries iMessage → SMS → fallback</p>
+                    </div>
+                    {!selectedFromPhone && <CheckCircle2 className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                  </DropdownMenuItem>
+                  {usbDevices.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal px-2 py-1">USB iPhones</DropdownMenuLabel>
+                      {usbDevices.map(dev => (
+                        <DropdownMenuItem key={dev} onSelect={() => setSelectedFromPhone(dev)} className="gap-2 cursor-pointer">
+                          <Cable className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">{dev}</p>
+                            <p className="text-[10px] text-muted-foreground">Connected via USB cable</p>
+                          </div>
+                          {selectedFromPhone === dev && <CheckCircle2 className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                  {accounts.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-[10px] text-muted-foreground font-normal px-2 py-1">iMessage accounts</DropdownMenuLabel>
+                      {accounts.map(acct => (
+                        <DropdownMenuItem key={acct} onSelect={() => setSelectedFromPhone(acct)} className="gap-2 cursor-pointer">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <p className="text-xs font-mono truncate">{acct}</p>
+                          {selectedFromPhone === acct && <CheckCircle2 className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            );
+          })()}
 
           {/* Mac connection status pill */}
           {macKnown && (

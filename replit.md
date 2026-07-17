@@ -122,6 +122,20 @@ Mac Agents send heartbeats every 30 seconds to `/api/agents/heartbeat` so the da
 
 ---
 
+## USB iPhone support
+
+Dispatch detects iPhones plugged in via USB cable using `system_profiler SPUSBDataType -json` on the Mac Agent. USB devices are stored in the `mac_agents.usb_devices` column and sent in heartbeats. The Compose page lets users pick a specific USB iPhone as the sender; the Mac Agent tries `service named "<iPhone name>"` in Messages.app before falling back to generic iMessage/SMS.
+
+Key files for the USB feature:
+- `lib/db/src/schema/mac-agents.ts` — `usbDevices` column
+- `artifacts/api-server/src/agent-server-js.ts` — `getUsbConnectedIphones()`, `sendMessage(phone, content, fromPhone)`
+- `artifacts/api-server/src/routes/agents.ts` — heartbeat schema + installer script
+- `artifacts/api-server/src/routes/messages.ts` — `fromPhone` in send schema
+- `artifacts/imessage-dashboard/src/pages/Compose.tsx` — sender picker dropdown
+- `artifacts/imessage-dashboard/src/pages/Settings.tsx` — USB-Connected iPhones section
+
+---
+
 ## User preferences
 
 - App name: **Dispatch** (not "iMessage Dashboard")
